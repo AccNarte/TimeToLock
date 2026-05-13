@@ -1,0 +1,58 @@
+[
+  {
+    "type": "event",
+    "name": "FileLockCreated",
+    "inputs": [
+      { "name": "lockAddress", "type": "address", "indexed": true },
+      { "name": "owner", "type": "address", "indexed": true },
+      { "name": "ipfsHash", "type": "string", "indexed": false },
+      { "name": "unlockTime", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "createFileLock",
+    "inputs": [
+      { "name": "_ipfsHash", "type": "string" },
+      { "name": "_encryptedKey", "type": "bytes" },
+      { "name": "_unlockTime", "type": "uint256" }
+    ],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getUserLocks",
+    "inputs": [{ "name": "user", "type": "address" }],
+    "outputs": [{ "name": "", "type": "address[]" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getAllLocks",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address[]" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTotalLocks",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserLockCount",
+    "inputs": [{ "name": "user", "type": "address" }],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isValidLock",
+    "inputs": [{ "name": "", "type": "address" }],
+    "outputs": [{ "name": "", "type": "bool" }],
+    "stateMutability": "view"
+  }
+]

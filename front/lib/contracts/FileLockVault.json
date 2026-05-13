@@ -1,0 +1,108 @@
+[
+  {
+    "type": "event",
+    "name": "FileLocked",
+    "inputs": [
+      { "name": "owner", "type": "address", "indexed": true },
+      { "name": "ipfsHash", "type": "string", "indexed": false },
+      { "name": "unlockTime", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "KeyRetrieved",
+    "inputs": [
+      { "name": "owner", "type": "address", "indexed": true },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "factory",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ipfsHash",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "string" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "encryptedKey",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "bytes" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unlockTime",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "keyRetrieved",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "bool" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getEncryptionKey",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "bytes" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "retrieveKey",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "bytes" }],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getStatus",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint8" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLockDetails",
+    "inputs": [],
+    "outputs": [
+      { "name": "owner_", "type": "address" },
+      { "name": "ipfsHash_", "type": "string" },
+      { "name": "unlockTime_", "type": "uint256" },
+      { "name": "keyRetrieved_", "type": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTimeUntilUnlock",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIpfsUrl",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "string" }],
+    "stateMutability": "view"
+  }
+]

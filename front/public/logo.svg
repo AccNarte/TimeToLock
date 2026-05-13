@@ -1,0 +1,33 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00EEFF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00B8CC;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="lockGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0A1628;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0D1E36;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer hexagon shape -->
+  <path d="M256 32L442 124V308L256 480L70 308V124L256 32Z" fill="url(#logoGradient)" />
+
+  <!-- Inner dark area -->
+  <path d="M256 72L402 148V292L256 440L110 292V148L256 72Z" fill="url(#lockGradient)" />
+
+  <!-- Lock body -->
+  <rect x="176" y="240" width="160" height="120" rx="16" fill="url(#logoGradient)" />
+
+  <!-- Lock shackle -->
+  <path d="M196 240V200C196 166.863 222.863 140 256 140C289.137 140 316 166.863 316 200V240" stroke="url(#logoGradient)" stroke-width="24" stroke-linecap="round" fill="none" />
+
+  <!-- Clock hand - hour -->
+  <line x1="256" y1="300" x2="256" y2="270" stroke="#0A1628" stroke-width="12" stroke-linecap="round" />
+
+  <!-- Clock hand - minute -->
+  <line x1="256" y1="300" x2="280" y2="300" stroke="#0A1628" stroke-width="8" stroke-linecap="round" />
+
+  <!-- Center dot -->
+  <circle cx="256" cy="300" r="8" fill="#0A1628" />
+</svg>
