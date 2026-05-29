@@ -1,0 +1,72 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Top-level .gitignore for TimeLock
+# Les sous-dossiers (contracts/, front/) ont leurs propres .gitignore qui
+# complètent celui-ci.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs / caches
+dist/
+build/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+.eslintcache
+
+# Hardhat
+contracts/cache/
+contracts/artifacts/
+contracts/typechain-types/
+contracts/coverage/
+contracts/deployments/
+
+# Environment files — NE JAMAIS COMMITTER LES SECRETS
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+**/.env
+**/.env.local
+**/.env.production
+**/.env.development
+**/.env.test
+
+# Templates / examples : on garde
+!.env.example
+!.env.*.example
+!**/.env.example
+!**/.env.*.example
+!env.local.example
+!env.example.txt
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Vercel
+.vercel
+
+# Coverage
+coverage/
+*.lcov
