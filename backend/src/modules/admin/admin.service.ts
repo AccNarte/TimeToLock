@@ -20,6 +20,7 @@ import { FileLock } from '../timelock-files/file-lock.entity';
 import { Wallet } from '../wallets/wallet.entity';
 import { Role } from '../roles/role.entity';
 
+/** Statistiques globales affichées en tête du panel admin. */
 export interface AdminStats {
   users: {
     total: number;
@@ -59,6 +60,7 @@ export interface AdminStats {
   };
 }
 
+/** Ligne affichée dans la table utilisateurs du panel admin. */
 export interface UserListItem {
   id: number;
   email: string | null;
@@ -73,6 +75,7 @@ export interface UserListItem {
   createdAt: Date;
 }
 
+/** Enveloppe paginée renvoyée par `listUsers`. */
 export interface PaginatedUsers {
   items: UserListItem[];
   total: number;
@@ -81,6 +84,20 @@ export interface PaginatedUsers {
   totalPages: number;
 }
 
+/**
+ * Service central du panel d'administration.
+ *
+ * Couvre :
+ *  - les statistiques globales (`getStats`),
+ *  - le CRUD avancé sur les utilisateurs (listing paginé/filtré/triable,
+ *    export CSV, modification email/rôle/mdp, suspension/réactivation,
+ *    suppression),
+ *  - la re-authentification de l'admin pour toute action sensible
+ *    (`verifyAdminChallenge`) — mot de passe pour les admins email, ou
+ *    signature wallet horodatée pour les admins wallet.
+ *
+ * Toutes les mutations sensibles sont journalisées via `AuditService`.
+ */
 @Injectable()
 export class AdminService {
   constructor(
@@ -99,6 +116,7 @@ export class AdminService {
     private readonly auditService: AuditService,
   ) {}
 
+  /** Renvoie true si l'utilisateur a le rôle `admin` ou `superadmin`. */
   async checkAdminAccess(userId: number): Promise<boolean> {
     const user = await this.usersRepository.findOne({
       where: { id: userId },
@@ -112,12 +130,12 @@ export class AdminService {
     return user.role.name === 'admin' || user.role.name === 'superadmin';
   }
 
+  /** Calcule l'ensemble des stats du dashboard admin. */
   async getStats(): Promise<AdminStats> {
-    // Users stats
-    // Wallet-login users have auto-generated emails ending in @timelock.local
-    // (created during the wallet-signup flow). We detect them by suffix rather
-    // than relying on the `loginMethod` column, which was inconsistent in
-    // older signups.
+    // Stats utilisateurs.
+    // Les comptes wallet ont un email auto-généré `wallet_<adresse>@timelock.local`
+    // (généré au login wallet). On les détecte par ce suffixe plutôt que via la
+    // colonne `loginMethod`, qui est restée incohérente sur les vieux comptes.
     const totalUsers = await this.usersRepository.count();
     const walletAuthUsers = await this.usersRepository.count({
       where: { email: ILike('%@timelock.local') },
@@ -131,7 +149,7 @@ export class AdminService {
     });
     const activeUsers = totalUsers - bannedUsers;
 
-    // New users this week
+    // Nouveaux comptes sur les 7 derniers jours.
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     const newThisWeek = await this.usersRepository
@@ -139,7 +157,7 @@ export class AdminService {
       .where('user.createdAt >= :date', { date: oneWeekAgo })
       .getCount();
 
-    // New users this month
+    // Nouveaux comptes sur le dernier mois.
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
     const newThisMonth = await this.usersRepository
@@ -147,7 +165,7 @@ export class AdminService {
       .where('user.createdAt >= :date', { date: oneMonthAgo })
       .getCount();
 
-    // Crypto locks stats
+    // Stats verrous crypto.
     const totalCryptoLocks = await this.cryptoLocksRepository.count();
     const lockedCrypto = await this.cryptoLocksRepository.count({
       where: { status: 'LOCKED' },
@@ -159,7 +177,7 @@ export class AdminService {
       where: { status: 'WITHDRAWN' },
     });
 
-    // Blockchain file locks stats
+    // Stats verrous de fichier on-chain (Files Blockchain).
     const totalFileLocks = await this.blockchainFileLocksRepository.count();
     const lockedFiles = await this.blockchainFileLocksRepository.count({
       where: { status: 'LOCKED' },
@@ -171,14 +189,14 @@ export class AdminService {
       where: { status: 'UNLOCKED' },
     });
 
-    // Total size of blockchain files
+    // Taille totale cumulée des fichiers verrouillés on-chain.
     const sizeResult = await this.blockchainFileLocksRepository
       .createQueryBuilder('file')
       .select('COALESCE(SUM(file.sizeBytes), 0)', 'totalSize')
       .getRawOne();
     const totalSizeBytes = parseInt(sizeResult?.totalSize || '0', 10);
 
-    // Classic file locks stats
+    // Stats verrous de fichier "classiques" (ciphertext stocké en base).
     const totalClassicFiles = await this.fileLocksRepository.count();
     const lockedClassic = await this.fileLocksRepository.count({
       where: { status: 'locked' },
@@ -190,7 +208,7 @@ export class AdminService {
       where: { status: 'unlocked' },
     });
 
-    // Wallets stats
+    // Stats wallets (interne = wallet embarqué, externe = MetaMask/Rabby lié).
     const totalWallets = await this.walletsRepository.count();
     const internalWallets = await this.walletsRepository.count({
       where: { type: 'internal' },
@@ -240,9 +258,10 @@ export class AdminService {
   }
 
   /**
-   * Build a User query with all the list filters (search / role / status /
-   * auth method / verification) applied. Shared by the paginated listing and
-   * the CSV export so both honour the exact same criteria.
+   * Construit la requête utilisateurs en appliquant tous les filtres de
+   * listing (recherche / rôle / statut / méthode d'auth / vérification
+   * email). Partagée entre le listing paginé et l'export CSV pour
+   * garantir que les deux honorent exactement les mêmes critères.
    */
   private buildUserQuery(dto: ListUsersDto): SelectQueryBuilder<User> {
     const qb = this.usersRepository
@@ -260,7 +279,7 @@ export class AdminService {
       qb.andWhere('user.status = :status', { status: dto.status });
     }
     if (dto.auth && dto.auth !== 'all') {
-      // Wallet accounts carry the @timelock.local suffix (see getStats).
+      // Les comptes wallet portent le suffixe @timelock.local (cf. getStats).
       qb.andWhere(
         dto.auth === 'wallet'
           ? 'user.email ILIKE :suffix'
@@ -276,7 +295,7 @@ export class AdminService {
     return qb;
   }
 
-  /** Resolve crypto-lock and file-lock counts for a set of user ids. */
+  /** Compte les locks crypto et fichiers pour un ensemble d'ids utilisateurs. */
   private async countsForUsers(userIds: number[]): Promise<{
     crypto: Map<number, number>;
     files: Map<number, number>;
@@ -307,6 +326,7 @@ export class AdminService {
     return { crypto, files };
   }
 
+  /** Transforme une ligne `User` + ses compteurs en DTO pour le front. */
   private toListItem(
     user: User,
     crypto: Map<number, number>,
@@ -315,8 +335,9 @@ export class AdminService {
     return {
       id: user.id,
       email: user.email,
-      // Same heuristic as getStats: trust the @timelock.local suffix over the
-      // stored loginMethod column, which has historical inconsistencies.
+      // Même heuristique que `getStats` : on se fie au suffixe
+      // @timelock.local plutôt qu'à la colonne `loginMethod`, qui a un
+      // historique d'incohérences sur les vieux comptes.
       loginMethod: user.email?.toLowerCase().endsWith('@timelock.local')
         ? 'wallet'
         : 'password',
@@ -332,7 +353,8 @@ export class AdminService {
   }
 
   /**
-   * Advanced, paginated user listing: search + multi-filter + whitelisted sort.
+   * Listing utilisateurs avancé : pagination + recherche + filtres
+   * multi-critères + tri sur colonnes whitelistées.
    */
   async listUsers(dto: ListUsersDto): Promise<PaginatedUsers> {
     const page = dto.page ?? 1;
@@ -356,7 +378,9 @@ export class AdminService {
   }
 
   /**
-   * Export the filtered user set as CSV (no pagination — every matching row).
+   * Export CSV de l'ensemble filtré (sans pagination — toutes les lignes
+   * matching).  Format RFC-4180 : quoting des valeurs contenant virgule,
+   * guillemet ou saut de ligne.
    */
   async exportUsersCsv(dto: ListUsersDto): Promise<string> {
     const qb = this.buildUserQuery(dto).orderBy(
@@ -382,8 +406,9 @@ export class AdminService {
 
     const escape = (v: unknown): string => {
       const s = v === null || v === undefined ? '' : String(v);
-      // RFC-4180 quoting: wrap in quotes and double any embedded quotes when the
-      // value contains a comma, quote or newline.
+      // Quoting RFC-4180 : on entoure de guillemets et on double les
+      // guillemets internes si la valeur contient virgule, guillemet ou
+      // saut de ligne.
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
@@ -409,6 +434,7 @@ export class AdminService {
     return [header.join(','), ...rows].join('\r\n');
   }
 
+  /** Détails complets d'un utilisateur (rôle, wallets, locks crypto et fichiers). */
   async getUserDetails(userId: number) {
     const user = await this.usersRepository.findOne({
       where: { id: userId },
@@ -419,14 +445,14 @@ export class AdminService {
       return null;
     }
 
-    // Get user's crypto locks
+    // Locks crypto de l'utilisateur (via la relation user → wallets → cryptoLocks).
     const cryptoLocks = await this.cryptoLocksRepository
       .createQueryBuilder('cl')
       .innerJoin('cl.wallet', 'w')
       .where('w.userId = :userId', { userId })
       .getMany();
 
-    // Get user's file locks
+    // Locks de fichier on-chain de l'utilisateur.
     const fileLocks = await this.blockchainFileLocksRepository.find({
       where: { userId },
     });
@@ -439,9 +465,10 @@ export class AdminService {
   }
 
   /**
-   * Tell the frontend which challenge to display before sensitive actions:
-   * the acting admin's primary auth method (wallet vs password) + the
-   * external wallet address to sign with (if applicable).
+   * Indique au front quelle modale de re-authentification afficher avant
+   * une action sensible : la méthode d'auth principale de l'admin
+   * connecté (wallet vs mot de passe) + l'adresse du wallet externe avec
+   * lequel signer (le cas échéant).
    */
   async getActingAdminAuthMethod(actingAdminId: number): Promise<{
     method: 'wallet' | 'password';
@@ -463,10 +490,14 @@ export class AdminService {
   }
 
   /**
-   * Re-authenticate the calling admin before applying a sensitive change.
-   * If they signed up by wallet → require a fresh signature with that wallet.
-   * Otherwise → require their account password.
-   * Returns the admin's auth method so callers can branch on it if needed.
+   * Re-authentifie l'admin appelant avant d'appliquer une modification
+   * sensible.
+   *  - S'il s'est inscrit par wallet → on exige une signature fraîche
+   *    de son wallet externe (anti-rejeu via timestamp dans le message).
+   *  - Sinon → on exige son mot de passe de compte.
+   *
+   * Renvoie la méthode utilisée pour permettre aux appelants de
+   * brancher leur logique si besoin.
    */
   async verifyAdminChallenge(
     actingAdminId: number,
@@ -488,7 +519,8 @@ export class AdminService {
         throw new UnauthorizedException('Signature required to confirm this action');
       }
 
-      // Replay protection: reject messages without a recent timestamp.
+      // Protection anti-rejeu : on rejette les messages sans timestamp
+      // récent (fenêtre de 5 minutes).
       const tsMatch = message.match(/Timestamp:\s*(\d+)/);
       const ts = tsMatch ? parseInt(tsMatch[1], 10) : NaN;
       if (Number.isNaN(ts) || Math.abs(Date.now() - ts) > 5 * 60 * 1000) {
@@ -514,25 +546,26 @@ export class AdminService {
       return 'wallet';
     }
 
-    // Password admin
+    // Admin email/mdp.
     const { password } = challenge;
     if (!password) {
       throw new UnauthorizedException('Password required to confirm this action');
     }
-    // bcrypt-aware (with legacy plaintext fallback), mirroring the login path.
+    // Vérif bcrypt-aware avec fallback plaintext legacy, comme le login.
     if (!(await verifyPassword(password, admin.passwordHash))) {
       throw new UnauthorizedException('Incorrect password');
     }
     return 'password';
   }
 
+  /** Changement de rôle d'un utilisateur (admin → user, user → admin, etc.). */
   async setUserRole(
     userId: number,
     roleName: string,
     actingAdminId: number,
     challenge: { password?: string; signature?: string; message?: string },
   ): Promise<User> {
-    // Re-authenticate the admin doing the change before mutating anything.
+    // Ré-authentification de l'admin avant toute mutation.
     await this.verifyAdminChallenge(actingAdminId, challenge);
 
     const user = await this.usersRepository.findOne({ where: { id: userId } });
@@ -558,9 +591,10 @@ export class AdminService {
   }
 
   /**
-   * Admin-level email change. Validates format, enforces uniqueness across
-   * users, and forces a re-verification (isEmailVerified=false) because the
-   * admin has no way to prove ownership of the new mailbox.
+   * Modification d'email côté admin. Valide le format, contrôle
+   * l'unicité parmi tous les utilisateurs, et force une re-vérification
+   * (isEmailVerified=false) puisque l'admin n'a aucun moyen de prouver
+   * qu'il possède la nouvelle boîte.
    */
   async setUserEmail(userId: number, rawEmail: string, actingAdminId?: number): Promise<User> {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
@@ -572,13 +606,14 @@ export class AdminService {
     if (!email) {
       throw new BadRequestException('Email cannot be empty');
     }
-    // Loose RFC-5322-ish check — strict regex isn't worth the maintenance cost.
+    // Vérif format façon RFC-5322 light — une regex stricte ne vaut pas
+    // le coût de maintenance pour le gain réel.
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new BadRequestException('Invalid email format');
     }
 
     if (email === user.email?.toLowerCase()) {
-      return user; // no-op
+      return user; // pas de changement → no-op.
     }
 
     const conflict = await this.usersRepository.findOne({
@@ -590,7 +625,7 @@ export class AdminService {
 
     const previous = user.email;
     user.email = email;
-    user.isEmailVerified = false; // admin cannot vouch for ownership
+    user.isEmailVerified = false; // l'admin ne peut pas attester de la nouvelle boîte.
     const saved = await this.usersRepository.save(user);
     await this.auditService.log({
       action: AUDIT_ACTIONS.EMAIL_CHANGED,
@@ -603,9 +638,10 @@ export class AdminService {
   }
 
   /**
-   * Admin reset of a user's password. Re-authenticates the acting admin, then
-   * sets a fresh bcrypt-hashed password. Email/password accounts only — wallet
-   * accounts authenticate by signature and have no password.
+   * Réinitialisation côté admin du mot de passe d'un utilisateur.
+   * Ré-authentifie d'abord l'admin, puis pose un nouveau mot de passe
+   * hashé en bcrypt. Comptes email/mdp uniquement — les comptes wallet
+   * s'authentifient par signature et n'ont pas de mot de passe.
    */
   async setUserPassword(
     targetUserId: number,
@@ -651,12 +687,15 @@ export class AdminService {
   }
 
   /**
-   * Hard-delete a user account. All FK-linked rows (wallets, file locks,
-   * blockchain file locks, email verifications) cascade by DB-level rules;
-   * audit logs are kept with their user_id nulled.
+   * Suppression définitive d'un compte (hard-delete).
    *
-   * Requires re-authentication via challenge. Refuses self-delete to avoid
-   * an admin accidentally locking themselves out of the panel.
+   * Les lignes liées (wallets, file_locks, blockchain_file_locks,
+   * email_verifications) sont supprimées en cascade via les règles FK
+   * de la base ; les `audit_logs` sont conservés avec leur `user_id`
+   * mis à NULL (`ON DELETE SET NULL`) pour préserver la trace.
+   *
+   * Exige la ré-authentification de l'admin et refuse l'auto-suppression
+   * (un admin ne peut pas se virer lui-même du panel par inadvertance).
    */
   async deleteUser(
     targetUserId: number,
@@ -676,6 +715,7 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
+    // Journalisation AVANT la suppression (sinon on perd l'email associé).
     await this.auditService.log({
       action: AUDIT_ACTIONS.USER_DELETED,
       entityType: AUDIT_ENTITIES.USER,
@@ -688,9 +728,12 @@ export class AdminService {
   }
 
   /**
-   * Soft-delete: ban a user. The row stays (so it can be restored) but the
-   * account is refused at login and on every authenticated request. Requires
-   * re-authentication via challenge and refuses self-ban.
+   * Soft-delete : suspension d'un utilisateur. La ligne reste en base
+   * (donc réactivable) mais le compte est refusé au login et à chaque
+   * requête authentifiée (cf. `JwtStrategy.validate`).
+   *
+   * Exige la ré-authentification de l'admin, refuse l'auto-suspension
+   * et protège les comptes `superadmin`.
    */
   async banUser(
     targetUserId: number,
@@ -711,7 +754,7 @@ export class AdminService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    // Protect superadmins from being banned through the panel.
+    // Protège les superadmins d'un bannissement depuis le panel.
     if (user.role?.name === 'superadmin') {
       throw new ForbiddenException('Un superadmin ne peut pas être banni.');
     }
@@ -734,8 +777,8 @@ export class AdminService {
   }
 
   /**
-   * Restore a previously banned user back to 'active'. Recovery action — does
-   * not require the admin challenge.
+   * Réactive un utilisateur précédemment banni (statut → 'active').
+   * Action de récupération, donc pas de challenge admin requis.
    */
   async restoreUser(targetUserId: number, actingAdminId?: number): Promise<UserListItem> {
     const user = await this.usersRepository.findOne({

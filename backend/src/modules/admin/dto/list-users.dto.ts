@@ -10,10 +10,14 @@ import {
 } from 'class-validator';
 
 /**
- * Query parameters for the advanced user listing: pagination, full-text search,
- * multi-criteria filtering and whitelisted sorting. Backed by the global
- * ValidationPipe ({ transform: true, whitelist: true }), so query strings are
- * coerced to the right types and unknown keys are stripped.
+ * Paramètres de requête du listing utilisateurs côté admin : pagination,
+ * recherche plein-texte, filtres multi-critères et tri sur colonnes
+ * whitelistées.
+ *
+ * Validé et coercé par le `ValidationPipe` global de l'application
+ * (`whitelist: true, transform: true`) : les query strings sont
+ * automatiquement converties au bon type et les clés inconnues sont
+ * supprimées.
  */
 export class ListUsersDto {
   @IsOptional()
@@ -29,34 +33,38 @@ export class ListUsersDto {
   @Max(100)
   limit: number = 20;
 
-  /** Free-text search on the email column (case-insensitive, partial match). */
+  /** Recherche plein-texte sur la colonne email (ILIKE, partiel). */
   @IsOptional()
   @IsString()
   @MaxLength(255)
   q?: string;
 
-  /** Filter by role name (e.g. 'admin', 'user'). */
+  /** Filtre par nom de rôle (ex. 'admin', 'user'). */
   @IsOptional()
   @IsString()
   @MaxLength(50)
   role?: string;
 
-  /** Account status filter. */
+  /** Filtre par statut du compte. */
   @IsOptional()
   @IsIn(['active', 'banned', 'all'])
   status: 'active' | 'banned' | 'all' = 'all';
 
-  /** Auth method filter (wallet accounts use the @timelock.local suffix). */
+  /**
+   * Filtre par méthode d'authentification. Les comptes wallet ont un
+   * email auto-généré au format `wallet_<adresse>@timelock.local` —
+   * c'est ce suffixe qui sert de discriminant.
+   */
   @IsOptional()
   @IsIn(['wallet', 'password', 'all'])
   auth: 'wallet' | 'password' | 'all' = 'all';
 
-  /** Email-verification filter. */
+  /** Filtre par état de vérification de l'email. */
   @IsOptional()
   @IsIn(['true', 'false', 'all'])
   verified: 'true' | 'false' | 'all' = 'all';
 
-  /** Whitelisted sort column. */
+  /** Colonne de tri (whitelistée pour éviter l'injection). */
   @IsOptional()
   @IsIn(['id', 'email', 'createdAt', 'status'])
   sort: 'id' | 'email' | 'createdAt' | 'status' = 'createdAt';

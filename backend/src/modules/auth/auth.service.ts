@@ -10,6 +10,14 @@ import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '../audit/audit.constants';
 import { ethers } from 'ethers';
 
+/**
+ * Service d'authentification : inscription, connexion email/mdp,
+ * connexion par signature wallet, lecture de profil, changement de
+ * mot de passe.
+ *
+ * Toutes les opérations sensibles sont journalisées dans `audit_logs`
+ * via `AuditService`.
+ */
 @Injectable()
 export class AuthService {
   constructor(
@@ -19,8 +27,8 @@ export class AuthService {
     private auditService: AuditService,
   ) {}
 
+  /** Inscription email/mdp : crée le compte, journalise, renvoie le JWT. */
   async register(registerDto: RegisterDto) {
-    // Stub: Create user and return token
     const user = await this.usersService.create(registerDto);
     await this.auditService.log({
       action: AUDIT_ACTIONS.USER_REGISTERED,
@@ -36,8 +44,17 @@ export class AuthService {
     };
   }
 
+  /**
+   * Connexion email/mdp.
+   *
+   * Étapes :
+   *   1. `validateUser` vérifie réellement le mot de passe (bcrypt ou
+   *      legacy plaintext via `verifyPassword`).
+   *   2. Refus si le compte est suspendu (soft-delete).
+   *   3. Journalisation de la connexion.
+   *   4. Signature et renvoi du JWT.
+   */
   async login(loginDto: LoginDto) {
-    // Stub: Validate user and return token
     const user = await this.usersService.validateUser(
       loginDto.email,
       loginDto.password,
@@ -59,7 +76,6 @@ export class AuthService {
   }
 
   async getProfile(userId: number) {
-    // Stub: Return user profile
     return this.usersService.findById(userId);
   }
 
@@ -71,14 +87,28 @@ export class AuthService {
     );
   }
 
+  /**
+   * Connexion (ou inscription implicite) par signature wallet.
+   *
+   * Le front demande à l'utilisateur de signer un message contenant son
+   * adresse et un timestamp. Le backend :
+   *   1. Recouvre l'adresse depuis la signature (`ethers.verifyMessage`)
+   *      et vérifie qu'elle correspond à l'adresse annoncée.
+   *   2. Cherche le wallet en base : si trouvé → connecte l'utilisateur
+   *      associé ; sinon → crée un nouveau compte avec un email
+   *      auto-généré `wallet_<adresse>@timelock.local` et lie le wallet.
+   *   3. Refuse les comptes suspendus.
+   *   4. Journalise l'événement et renvoie le JWT.
+   */
   async walletLogin(walletLoginDto: WalletLoginDto) {
     const { address, signature, message } = walletLoginDto;
 
     try {
-      // Verify the signature
+      // Recouvrement de l'adresse à partir de la signature.
       const recoveredAddress = ethers.verifyMessage(message, signature);
-      
-      // Normalize addresses to lowercase for comparison
+
+      // Normalisation lowercase pour les comparaisons (les adresses
+      // Ethereum sont insensibles à la casse en pratique).
       const normalizedAddress = address.toLowerCase();
       const normalizedRecovered = recoveredAddress.toLowerCase();
 
@@ -86,13 +116,13 @@ export class AuthService {
         throw new UnauthorizedException('Invalid signature');
       }
 
-      // Find wallet by address
+      // Recherche du wallet en base.
       const existingWallet = await this.walletsService.findByAddress(normalizedAddress);
-      
+
       let user = null;
-      
+
       if (existingWallet) {
-        // Wallet exists, get the associated user
+        // Wallet déjà lié à un compte → on récupère l'utilisateur associé.
         user = await this.usersService.findById(existingWallet.userId);
         if (!user) {
           throw new UnauthorizedException('User not found for wallet');
@@ -101,13 +131,13 @@ export class AuthService {
           throw new UnauthorizedException('Ce compte a été suspendu.');
         }
       } else {
-        // Create new user for wallet
+        // Premier login de ce wallet → création implicite du compte.
         user = await this.usersService.create({
           email: `wallet_${normalizedAddress}@timelock.local`,
-          password: '', // No password for wallet login
+          password: '', // Compte wallet : pas de mot de passe.
         });
-        
-        // Link the wallet to the user
+
+        // Et lien du wallet au nouveau compte.
         await this.walletsService.linkExternal(user.id, {
           address: normalizedAddress,
           provider: 'metamask',
@@ -123,13 +153,16 @@ export class AuthService {
         metadata: { address: normalizedAddress, newAccount: !existingWallet },
       });
 
-      // Generate JWT token
+      // Signature et renvoi du JWT.
       const payload = { sub: user.id, email: user.email };
       return {
         access_token: this.jwtService.sign(payload),
         user: { id: user.id, email: user.email },
       };
     } catch (error) {
+      // On laisse remonter les `UnauthorizedException` explicites (messages
+      // utilisateur déjà français) et on masque le reste derrière un
+      // message générique pour ne pas leaker la stack interne.
       if (error instanceof UnauthorizedException) {
         throw error;
       }
@@ -137,5 +170,3 @@ export class AuthService {
     }
   }
 }
-
-

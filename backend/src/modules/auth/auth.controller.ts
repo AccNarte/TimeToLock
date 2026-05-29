@@ -12,32 +12,42 @@ import { CurrentUser } from '../../common/decorators/user.decorator';
 import { JWT_COOKIE_NAME } from './strategies/jwt.strategy';
 
 /*
- * Cookie configuration.
+ * Configuration du cookie JWT.
  *
- * Production deployment is cross-domain (front on timelock.app, API on
- * api.timelock.app). For the browser to send the JWT cookie to a different
- * origin, the cookie MUST be `SameSite=None` and `Secure` (HTTPS only).
- * Anything else and modern browsers silently drop the cookie on cross-site
- * fetches, breaking auth.
+ * En production, le front (www.the21method.com) et l'API
+ * (api.the21method.com) sont sur des sous-domaines différents. Pour que
+ * le navigateur envoie le cookie sur des requêtes cross-origin, le cookie
+ * DOIT être `SameSite=None` + `Secure` (HTTPS obligatoire). Sinon les
+ * navigateurs modernes le suppriment silencieusement.
  *
- * In development the front and back are both on localhost (different ports,
- * but same site), so `SameSite=Lax` is sufficient and `Secure` would actually
- * prevent the cookie from being set without HTTPS.
+ * En développement, front et back sont sur localhost (ports différents
+ * mais même site) : `SameSite=Lax` suffit, et `Secure=true` empêcherait
+ * carrément la pose du cookie en HTTP local.
  *
- * The `COOKIE_DOMAIN` env var is optional. Set it to e.g. `.timelock.app` if
- * you want the cookie to be shared between subdomains (front + api).
+ * `COOKIE_DOMAIN` est optionnel : à régler par exemple sur
+ * `.the21method.com` pour partager le cookie entre les sous-domaines.
  */
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 const COOKIE_OPTIONS = {
-  httpOnly: true, // Prevents JS access — defense against XSS
-  secure: IS_PROD, // HTTPS-only in production
+  httpOnly: true, // Empêche tout accès via JS → protection contre le XSS.
+  secure: IS_PROD, // HTTPS uniquement en production.
   sameSite: (IS_PROD ? 'none' : 'lax') as 'none' | 'lax',
-  maxAge: 24 * 60 * 60 * 1000, // 1 day
+  maxAge: 24 * 60 * 60 * 1000, // 1 jour.
   path: '/',
   ...(process.env.COOKIE_DOMAIN ? { domain: process.env.COOKIE_DOMAIN } : {}),
 };
 
+/**
+ * Contrôleur d'authentification (`/auth`).
+ *
+ * Couvre : inscription, connexion email/mdp, connexion wallet,
+ * déconnexion, lecture du profil, changement de mot de passe, et
+ * vérification d'email (envoi du lien + consommation du token).
+ *
+ * Toutes les routes sont protégées par `ThrottlerGuard` pour limiter
+ * les tentatives brute-force.
+ */
 @Controller('auth')
 @UseGuards(ThrottlerGuard)
 export class AuthController {
@@ -46,7 +56,7 @@ export class AuthController {
     private readonly emailVerificationService: EmailVerificationService,
   ) {}
 
-  // Strict rate limiting: 5 attempts per minute for registration
+  // Rate limit serré : 5 inscriptions par minute par IP.
   @Post('register')
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async register(
@@ -55,14 +65,14 @@ export class AuthController {
   ) {
     const result = await this.authService.register(registerDto);
 
-    // Set HTTP-only cookie
+    // Pose du cookie HTTP-only contenant le JWT.
     res.cookie(JWT_COOKIE_NAME, result.access_token, COOKIE_OPTIONS);
 
-    // Return user data without token (token is in cookie)
+    // On ne renvoie PAS le token dans le corps : il vit uniquement dans le cookie.
     return { user: result.user };
   }
 
-  // Very strict rate limiting: 5 attempts per minute for login (brute-force protection)
+  // Rate limit serré : 5 tentatives de login par minute (anti brute-force).
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async login(
@@ -70,15 +80,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.login(loginDto);
-
-    // Set HTTP-only cookie
     res.cookie(JWT_COOKIE_NAME, result.access_token, COOKIE_OPTIONS);
-
-    // Return user data without token (token is in cookie)
     return { user: result.user };
   }
 
-  // Strict rate limiting: 5 attempts per minute for wallet login
+  // Rate limit serré : 5 tentatives de wallet-login par minute.
   @Post('wallet-login')
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   async walletLogin(
@@ -86,18 +92,14 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.walletLogin(walletLoginDto);
-
-    // Set HTTP-only cookie
     res.cookie(JWT_COOKIE_NAME, result.access_token, COOKIE_OPTIONS);
-
-    // Return user data without token (token is in cookie)
     return { user: result.user };
   }
 
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
-    // `clearCookie` must mirror the attributes used when the cookie was set,
-    // otherwise the browser keeps the original cookie in place.
+    // `clearCookie` doit reprendre EXACTEMENT les mêmes attributs que ceux
+    // utilisés à la pose du cookie, sinon le navigateur conserve l'ancien.
     res.clearCookie(JWT_COOKIE_NAME, {
       httpOnly: COOKIE_OPTIONS.httpOnly,
       secure: COOKIE_OPTIONS.secure,
@@ -116,8 +118,9 @@ export class AuthController {
   }
 
   /**
-   * Change the authenticated user's password (email/password accounts only).
-   * Rate limited to slow down attempts to brute-force the current password.
+   * Change le mot de passe de l'utilisateur connecté (comptes email/mdp
+   * uniquement). Rate-limité pour ralentir une éventuelle attaque
+   * brute-force sur le mot de passe actuel.
    */
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
@@ -130,8 +133,8 @@ export class AuthController {
   }
 
   /**
-   * Send verification email to the authenticated user
-   * Rate limited to 3 requests per minute to prevent abuse
+   * Envoie un email de vérification à l'utilisateur connecté.
+   * Rate-limité à 3 requêtes par minute pour éviter le spam.
    */
   @Post('send-verification')
   @UseGuards(JwtAuthGuard)
@@ -142,8 +145,9 @@ export class AuthController {
   }
 
   /**
-   * Verify email with token (public endpoint)
-   * Rate limited to prevent brute-force attacks on tokens
+   * Consomme un token de vérification d'email (route publique appelée
+   * via le lien envoyé dans le mail). Rate-limité pour empêcher le
+   * brute-force du token.
    */
   @Post('verify-email')
   @Throttle({ default: { limit: 10, ttl: 60000 } })
@@ -155,9 +159,7 @@ export class AuthController {
     };
   }
 
-  /**
-   * Check email verification status for authenticated user
-   */
+  /** Renvoie l'état de vérification d'email de l'utilisateur connecté. */
   @Get('verification-status')
   @UseGuards(JwtAuthGuard)
   async getVerificationStatus(@CurrentUser('id') userId: number) {
@@ -168,5 +170,3 @@ export class AuthController {
     };
   }
 }
-
-

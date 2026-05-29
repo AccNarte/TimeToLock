@@ -6,6 +6,7 @@ import { Action } from './action.entity';
 import { EntityType } from './entity-type.entity';
 import { ListAuditDto } from './dto/list-audit.dto';
 
+/** Représentation friendly d'une ligne de log envoyée au front. */
 export interface AuditLogDto {
   id: number;
   action: string | null;
@@ -19,6 +20,7 @@ export interface AuditLogDto {
   createdAt: Date;
 }
 
+/** Enveloppe de pagination retournée par `findPaginated`. */
 export interface PaginatedAudit {
   items: AuditLogDto[];
   total: number;
@@ -27,10 +29,25 @@ export interface PaginatedAudit {
   totalPages: number;
 }
 
+/**
+ * Service central du module Audit.
+ *
+ * Rôle : journaliser tous les événements sensibles de l'application
+ * (auth, actions admin, locks crypto / fichiers) dans une table dédiée
+ * `audit_logs`, et fournir des méthodes de consultation pour le dashboard
+ * utilisateur (`findAllByUser`) et le panel admin (`findPaginated`).
+ *
+ * Particularités :
+ *  - **Auto-seeding** des tables de référence : pas besoin de pré-remplir
+ *    `actions` et `entity_types` — les lignes sont créées au premier
+ *    appel et mises en cache mémoire.
+ *  - **Résilience** : `log()` est totalement isolé en try/catch. Un échec
+ *    d'écriture du log ne casse jamais l'action métier qui l'a déclenché.
+ */
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
-  // Name → id caches so we don't hit the lookup tables on every write.
+  // Caches nom → id pour éviter une requête à chaque écriture de log.
   private readonly actionCache = new Map<string, number>();
   private readonly entityTypeCache = new Map<string, number>();
 
@@ -43,7 +60,14 @@ export class AuditService {
     private entityTypeRepository: Repository<EntityType>,
   ) {}
 
-  /** Find (or create) the lookup row for `name`, returning its id. Cached. */
+  /**
+   * Trouve (ou crée) la ligne du catalogue correspondant à `name` et
+   * renvoie son id. Résultat mis en cache.
+   *
+   * Cas de concurrence : si deux requêtes essaient d'insérer la même
+   * ligne en même temps, l'une lève sur la contrainte d'unicité ; on
+   * retombe alors sur un simple `findOne`.
+   */
   private async resolveId<T extends ObjectLiteral & { id: number }>(
     name: string,
     repo: Repository<T>,
@@ -58,7 +82,7 @@ export class AuditService {
         const entity = repo.create({ name } as any) as unknown as T;
         row = await repo.save(entity);
       } catch {
-        // Another concurrent insert won the unique race — re-read.
+        // Une insertion concurrente a gagné la course → on relit.
         row = await repo.findOne({ where: { name } as any });
       }
     }
@@ -68,8 +92,11 @@ export class AuditService {
   }
 
   /**
-   * Record an audited event. **Never throws** — an audit failure must not break
-   * the business action that triggered it (logged to the Nest logger instead).
+   * Enregistre un événement audité.
+   *
+   * **Ne lève jamais d'exception** : un échec de journalisation ne doit
+   * jamais interrompre l'action métier qui l'a déclenché. L'erreur est
+   * envoyée vers le `Logger` de Nest pour investigation.
    */
   async log(params: {
     action: string;
@@ -99,6 +126,7 @@ export class AuditService {
     }
   }
 
+  /** Transforme une ligne brute en DTO friendly pour le front. */
   private toDto(row: AuditLog): AuditLogDto {
     return {
       id: row.id,
@@ -114,7 +142,7 @@ export class AuditService {
     };
   }
 
-  /** Recent activity for one user (dashboard). Friendly DTOs, newest first. */
+  /** Activité récente d'un utilisateur (utilisé par le dashboard). */
   async findAllByUser(userId: number): Promise<AuditLogDto[]> {
     const rows = await this.auditLogRepository.find({
       where: { userId },
@@ -125,7 +153,11 @@ export class AuditService {
     return rows.map((r) => this.toDto(r));
   }
 
-  /** Paginated + filtered audit log for the admin panel. */
+  /**
+   * Liste paginée et filtrée du journal complet, pour le panel admin.
+   * Jointures préchargées sur action / entityType / user / wallet pour
+   * éviter le N+1.
+   */
   async findPaginated(dto: ListAuditDto): Promise<PaginatedAudit> {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;

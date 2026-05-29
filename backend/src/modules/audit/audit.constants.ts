@@ -1,7 +1,14 @@
 /**
- * Canonical names stored in the `actions` / `entity_types` lookup tables.
- * Using constants avoids typos and keeps the values consistent across the app.
- * AuditService resolves these names to FK ids (creating the row if missing).
+ * Noms canoniques stockés dans les tables de référence `actions` et
+ * `entity_types` (catalogues du module d'audit).
+ *
+ * L'utilisation de constantes évite les fautes de frappe (un `USER_LOGINN`
+ * créerait silencieusement une nouvelle ligne dans `actions`) et garantit
+ * la cohérence des libellés entre tous les producteurs d'événements
+ * (auth, admin, locks…).
+ *
+ * `AuditService.log()` résout dynamiquement ces noms en identifiants de
+ * FK (et crée la ligne du catalogue si elle n'existe pas encore).
  */
 export const AUDIT_ACTIONS = {
   USER_REGISTERED: 'USER_REGISTERED',

@@ -115,7 +115,7 @@ du Vault, dates) — jamais le fichier en clair ni les fonds.
 
 ## 6. Structure du repo (poste de dev)
 
-Racine locale : `c:\Users\user\loak\TimeToLock\`
+Racine locale : `<chemin-vers-votre-clone>/TimeToLock/`
 
 ```
 TimeToLock/

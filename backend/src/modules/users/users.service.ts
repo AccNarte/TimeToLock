@@ -10,6 +10,15 @@ import { Repository } from 'typeorm';
 import { User } from './user.entity';
 import { hashPassword, verifyPassword } from '../../common/utils/password.util';
 
+/**
+ * Service en charge de la persistance et de l'authentification des
+ * utilisateurs (création, lookup, vérification de mot de passe,
+ * changement de mot de passe).
+ *
+ * Toute la logique de hashage et de vérification est déléguée à
+ * `password.util.ts`, qui gère à la fois bcrypt et la compatibilité
+ * descendante avec les anciens comptes en plaintext.
+ */
 @Injectable()
 export class UsersService {
   constructor(
@@ -17,15 +26,20 @@ export class UsersService {
     private usersRepository: Repository<User>,
   ) {}
 
+  /**
+   * Crée un nouvel utilisateur.
+   * - Refuse si l'email est déjà pris (`ConflictException`).
+   * - Hash le mot de passe avec bcrypt si renseigné.
+   * - Les inscriptions par wallet passent un mot de passe vide : on ne
+   *   hash rien dans ce cas, le compte ne peut pas se connecter par
+   *   mot de passe (uniquement par signature wallet).
+   */
   async create(data: { email: string; password: string }): Promise<User> {
-    // Check if email already exists
     const existingUser = await this.findByEmail(data.email);
     if (existingUser) {
       throw new ConflictException('Un compte avec cet email existe déjà');
     }
 
-    // Wallet signups pass an empty password (they authenticate by signature),
-    // so keep it empty — only hash a real password.
     const passwordHash = data.password ? await hashPassword(data.password) : '';
 
     const user = this.usersRepository.create({
@@ -43,10 +57,15 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { email } });
   }
 
+  /**
+   * Vérifie les identifiants email + mot de passe au login.
+   *
+   * Message d'erreur générique (« Email ou mot de passe incorrect ») :
+   * on ne révèle jamais si l'erreur vient de l'email ou du mot de passe,
+   * pour empêcher l'énumération des comptes par essais successifs.
+   */
   async validateUser(email: string, password: string): Promise<User> {
     const user = await this.findByEmail(email);
-    // Generic message: never reveal whether it's the email or the password that
-    // is wrong (avoids account enumeration).
     if (!user) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
@@ -58,9 +77,14 @@ export class UsersService {
   }
 
   /**
-   * Change the password of an email/password account. Verifies the current
-   * password, refuses wallet accounts (no password), and stores the new one as
-   * a bcrypt hash.
+   * Change le mot de passe d'un compte email/mdp.
+   *
+   * Sécurité :
+   *  - Vérifie le mot de passe actuel avant tout changement.
+   *  - Refuse les comptes wallet (qui n'ont pas de mot de passe).
+   *  - Refuse un nouveau mot de passe identique à l'ancien.
+   *  - Stocke le nouveau mot de passe hashé en bcrypt (les comptes
+   *    legacy en plaintext sont implicitement upgradés à ce moment).
    */
   async changePassword(
     userId: number,
@@ -85,7 +109,7 @@ export class UsersService {
       throw new UnauthorizedException('Mot de passe actuel incorrect');
     }
 
-    // Reject a no-op change (also catches legacy plaintext == new).
+    // Refus du no-op (attrape aussi le cas legacy plaintext == nouveau mdp).
     const sameAsCurrent = await verifyPassword(newPassword, user.passwordHash);
     if (sameAsCurrent) {
       throw new BadRequestException(

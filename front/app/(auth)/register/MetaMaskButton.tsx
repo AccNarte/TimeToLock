@@ -14,6 +14,20 @@ interface MetaMaskButtonProps {
   disabled?: boolean;
 }
 
+/**
+ * Bouton d'inscription par wallet sur la page Register.
+ *
+ * Côté API, l'inscription par wallet est gérée par le même endpoint que la
+ * connexion (`POST /auth/wallet-login`) : si le wallet n'a pas encore de
+ * compte associé, le backend crée automatiquement un utilisateur dont
+ * l'email est `wallet_<adresse>@timelock.local`.
+ *
+ * Différences fonctionnelles vs le bouton de Login :
+ *   - Style visuel plus mis en avant (gradient, taille).
+ *   - Libellé « S'inscrire » au lieu de « Se connecter ».
+ *   - Même flux technique : connexion wallet → signature d'un message
+ *     horodaté → envoi au backend → cookie JWT HttpOnly → /dashboard.
+ */
 export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
@@ -25,45 +39,36 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
   const { signMessageAsync } = useSignMessage();
   const { login: authContextLogin } = useAuth();
   const router = useRouter();
+  // Évite de relancer la signature à chaque re-render du useEffect (le
+  // connector et le chainId arrivent souvent juste après l'adresse).
   const hasProcessedAuth = useRef(false);
 
-  // Watch for connection and handle authentication
+  // Une fois le wallet connecté, on enchaîne automatiquement signature + auth.
   useEffect(() => {
     const handleWalletAuth = async () => {
       if (!isConnected || !address || hasProcessedAuth.current) {
-        console.log('🔍 Wallet not connected yet or auth already processed. isConnected:', isConnected, 'address:', address, 'hasProcessedAuth:', hasProcessedAuth.current);
         return;
       }
 
       hasProcessedAuth.current = true;
-      console.log('✅ Wallet connected! Address:', address);
       setIsConnecting(false);
       setIsSigning(true);
 
       try {
-        // Wait for connector and chainId to be ready
+        // Le connector et le chainId peuvent arriver après l'adresse — on patiente.
         if (!connector || !chainId) {
-          console.log('⏳ Waiting for connector and chainId to be ready...', { connector: !!connector, chainId });
           return;
         }
 
-        // Create a message to sign
+        // Message à signer (adresse + timestamp anti-rejeu côté backend).
         const message = `Sign this message to authenticate with TimeLock.\n\nAddress: ${address}\nTimestamp: ${Date.now()}`;
-        console.log('📝 Requesting signature for message:', message);
 
-        // Request signature using wagmi's signMessageAsync
-        // This should work now that we've verified connector and chainId are ready
+        // Demande de signature au wallet.
         const signature = await signMessageAsync({ message });
-        console.log('✅ Signature received:', signature);
-
-        console.log('📤 Ready to send to backend:', {
-          address,
-          signature,
-          message,
-        });
 
         try {
-          console.log('Calling backend at:', `${process.env.NEXT_PUBLIC_API_URL}/auth/wallet-login`);
+          // Envoi au backend : il vérifie la signature et crée le compte si
+          // l'adresse n'en a pas encore.
           const response = await authService.walletLogin({
             address,
             signature,
@@ -71,19 +76,15 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
           });
 
           if (response.user) {
-            console.log('✅ Backend authentication successful:', response);
-            // Token is now set in HTTP-only cookie by the backend
+            // Le JWT est posé en cookie HttpOnly par le backend.
             authService.setUser(response.user);
             router.push('/dashboard');
           } else {
-            console.warn('⚠️ Backend authentication failed: No user received.');
             onError?.('L\'authentification par wallet a échoué. Veuillez réessayer.');
           }
         } catch (apiError: any) {
-          console.error('❌ Error calling backend:', apiError);
           const backendMessage = apiError.response?.data?.message || apiError.message;
           const statusCode = apiError.response?.status;
-          console.log('💡 Backend response:', statusCode, backendMessage);
           if (statusCode === 404) {
             onError?.('Endpoint /auth/wallet-login does not exist yet in the backend');
           } else {
@@ -91,15 +92,14 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
           }
         }
       } catch (signError: any) {
-        console.error('❌ Error signing message:', signError);
         let errorMsg = 'Erreur lors de la signature. Veuillez réessayer.';
-        
+
         if (signError.code === 4001) {
           errorMsg = 'Signature refusée. Veuillez autoriser la signature dans MetaMask.';
         } else if (signError.message) {
           errorMsg = signError.message;
         }
-        
+
         onError?.(errorMsg);
       } finally {
         setIsSigning(false);
@@ -110,46 +110,38 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
     handleWalletAuth();
   }, [isConnected, address, connector, chainId, signMessageAsync, onError, router, authContextLogin]);
 
-  // Handle MetaMask connection
+  /**
+   * Lance la connexion : modale RainbowKit en priorité, connecteur MetaMask
+   * direct en fallback, requête brute à window.ethereum en dernier recours.
+   */
   const handleMetaMaskConnect = async () => {
-    console.log('🚀 Starting MetaMask connection...');
     setIsConnecting(true);
-    
+
     try {
-      // Try to use RainbowKit modal first
+      // Priorité : modale RainbowKit (gère MetaMask, Rabby, WalletConnect…).
       if (openConnectModal) {
-        console.log('📱 Using RainbowKit modal...');
         openConnectModal();
         return;
       }
 
-      // Fallback: Connect directly to MetaMask using wagmi
-      console.log('🔄 Falling back to direct MetaMask connection...');
+      // Fallback : connecteur MetaMask direct via wagmi.
       const metaMaskConnector = connectors.find(
-        (connector) => connector.id === 'metaMask' || connector.id === 'injected'
+        (c) => c.id === 'metaMask' || c.id === 'injected',
       );
 
       if (metaMaskConnector) {
-        console.log('✅ Found MetaMask connector:', metaMaskConnector.id);
         connect({ connector: metaMaskConnector });
+      } else if (typeof window !== 'undefined' && window.ethereum) {
+        // Dernier recours : requête directe à window.ethereum.
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        setIsConnecting(false);
       } else {
-        console.warn('⚠️ No MetaMask connector found. Available connectors:', connectors.map(c => c.id));
-        if (typeof window !== 'undefined' && window.ethereum) {
-          console.log('🔌 Connecting via window.ethereum...');
-          const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-          console.log('✅ MetaMask connection successful. Accounts:', accounts);
-          setIsConnecting(false);
-        } else {
-          console.error('❌ MetaMask not detected');
-          const errorMsg = 'MetaMask n\'est pas détecté. Veuillez installer l\'extension MetaMask.';
-          onError?.(errorMsg);
-          setIsConnecting(false);
-        }
+        onError?.('MetaMask n\'est pas détecté. Veuillez installer l\'extension MetaMask.');
+        setIsConnecting(false);
       }
     } catch (err: any) {
-      console.error('❌ Error connecting to MetaMask:', err);
       let errorMsg = 'Erreur lors de la connexion à MetaMask. Veuillez réessayer.';
-      
+
       if (err.code === 4001) {
         errorMsg = 'Connexion refusée. Veuillez autoriser l\'accès à MetaMask.';
       } else if (err.code === -32002) {
@@ -157,7 +149,7 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
       } else if (err.message) {
         errorMsg = err.message;
       }
-      
+
       onError?.(errorMsg);
       setIsConnecting(false);
     }
@@ -191,5 +183,3 @@ export function MetaMaskButton({ onError, disabled }: MetaMaskButtonProps) {
     </Button>
   );
 }
-
-

@@ -12,6 +12,18 @@ import { IpfsService } from '../ipfs/ipfs.service';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_ACTIONS, AUDIT_ENTITIES } from '../audit/audit.constants';
 
+/**
+ * Service de persistance des verrous de fichier on-chain (Files Blockchain).
+ *
+ * Comme pour les verrous crypto, l'essentiel se fait côté front :
+ *   1. chiffrement AES-256-GCM du fichier dans le navigateur,
+ *   2. upload du ciphertext sur IPFS via Pinata,
+ *   3. création du Vault on-chain par le wallet de l'utilisateur.
+ *
+ * Le backend ne stocke que les métadonnées (CID IPFS, hash de tx,
+ * adresse du Vault, dates, taille…) et gère la destruction (unpin Pinata
+ * + suppression DB).
+ */
 @Injectable()
 export class TimelockFilesBlockchainService {
   private readonly logger = new Logger(TimelockFilesBlockchainService.name);
@@ -24,8 +36,8 @@ export class TimelockFilesBlockchainService {
   ) {}
 
   /**
-   * Create a new blockchain file lock record
-   * Called after the frontend has created the lock on blockchain and uploaded to IPFS
+   * Enregistre un nouveau verrou de fichier on-chain. Appelé par le front
+   * une fois le ciphertext uploadé sur IPFS et le Vault créé on-chain.
    */
   async create(
     userId: number,
@@ -69,8 +81,8 @@ export class TimelockFilesBlockchainService {
   }
 
   /**
-   * Find all blockchain file locks for a user
-   * Automatically syncs status based on unlock time
+   * Renvoie tous les verrous de fichier d'un utilisateur, avec resync
+   * automatique du statut (LOCKED → UNLOCKABLE) si la date est passée.
    */
   async findAllByUser(userId: number): Promise<BlockchainFileLock[]> {
     const locks = await this.fileLockRepository.find({
@@ -81,7 +93,7 @@ export class TimelockFilesBlockchainService {
 
     const now = new Date();
 
-    // Sync status based on time
+    // Passage automatique LOCKED → UNLOCKABLE pour les verrous arrivés à échéance.
     for (const lock of locks) {
       if (lock.status === 'LOCKED' && lock.unlockAt <= now) {
         lock.status = 'UNLOCKABLE';
@@ -92,9 +104,7 @@ export class TimelockFilesBlockchainService {
     return locks;
   }
 
-  /**
-   * Find a specific blockchain file lock by ID
-   */
+  /** Récupère un verrou par son id, avec resync du statut si besoin. */
   async findById(
     id: number,
     userId: number,
@@ -105,7 +115,7 @@ export class TimelockFilesBlockchainService {
     });
 
     if (lock) {
-      // Sync status based on time
+      // Passage LOCKED → UNLOCKABLE si l'échéance est dépassée.
       const now = new Date();
       if (lock.status === 'LOCKED' && lock.unlockAt <= now) {
         lock.status = 'UNLOCKABLE';
@@ -117,8 +127,8 @@ export class TimelockFilesBlockchainService {
   }
 
   /**
-   * Get the IPFS gateway URL for a file
-   * Only returns if the file is unlockable
+   * Renvoie l'URL du gateway IPFS pour récupérer le ciphertext.
+   * Renvoie un 403 tant que la date de déverrouillage n'est pas atteinte.
    */
   async getIpfsUrl(id: number, userId: number): Promise<string> {
     const lock = await this.findById(id, userId);
@@ -136,8 +146,8 @@ export class TimelockFilesBlockchainService {
   }
 
   /**
-   * Mark a file lock as unlocked
-   * Called after the user has successfully retrieved the key from the blockchain
+   * Marque le verrou comme déverrouillé. Appelé par le front une fois
+   * que la clé a été récupérée du Vault on-chain et le fichier déchiffré.
    */
   async markAsUnlocked(id: number, userId: number): Promise<BlockchainFileLock> {
     const lock = await this.findById(id, userId);
@@ -156,8 +166,7 @@ export class TimelockFilesBlockchainService {
   }
 
   /**
-   * Sync the status of a file lock
-   * Updates based on unlock time
+   * Resync ponctuelle du statut d'un verrou (basé sur l'écoulement du temps).
    */
   async syncStatus(id: number, userId: number): Promise<BlockchainFileLock> {
     const lock = await this.fileLockRepository.findOne({
@@ -184,9 +193,7 @@ export class TimelockFilesBlockchainService {
     return lock;
   }
 
-  /**
-   * Get statistics for a user's file locks
-   */
+  /** Statistiques des verrous de fichier d'un utilisateur. */
   async getUserStats(userId: number): Promise<{
     total: number;
     locked: number;
@@ -226,13 +233,16 @@ export class TimelockFilesBlockchainService {
   }
 
   /**
-   * Permanently destroy a file lock: unpin from Pinata + hard-delete the DB row.
-   * The on-chain contract (encrypted AES key) is left untouched — without the
-   * IPFS payload, the contract data is cryptographically useless.
+   * Destruction définitive d'un verrou de fichier : unpin Pinata +
+   * suppression de la ligne en base.
    *
-   * After this call the user (and admins) can no longer recover the file from
-   * our infrastructure. The CID may still live on other IPFS nodes that
-   * happened to pin it, but Pinata won't serve it anymore.
+   * Le smart contract (qui contient la clé AES chiffrée) reste tel quel,
+   * mais sans le payload IPFS, ces données on-chain n'ont plus aucune
+   * valeur cryptographique. Après cet appel, ni l'utilisateur ni les
+   * admins ne peuvent récupérer le fichier depuis notre infrastructure.
+   *
+   * Le CID peut techniquement subsister sur d'autres nœuds IPFS qui
+   * l'auraient pinné, mais Pinata ne le servira plus.
    */
   async delete(id: number, userId: number): Promise<{ unpinned: boolean }> {
     const lock = await this.findById(id, userId);
@@ -241,9 +251,10 @@ export class TimelockFilesBlockchainService {
       throw new NotFoundException('File lock not found');
     }
 
-    // Best-effort unpin. We still delete the DB row even if Pinata fails,
-    // otherwise the user is stuck — but we surface the result so the UI can
-    // warn if the file might linger.
+    // Unpin best-effort : on supprime la ligne DB même si Pinata refuse,
+    // sinon l'utilisateur reste bloqué. On remonte juste le résultat
+    // pour que le front puisse l'avertir si le fichier risque de
+    // persister sur le réseau.
     let unpinned = false;
     if (lock.ipfsHash) {
       try {
