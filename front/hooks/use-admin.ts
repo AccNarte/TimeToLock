@@ -11,6 +11,11 @@ import {
   ListAuditParams,
 } from '@/lib/api/services/admin.service';
 
+/**
+ * Hook léger qui vérifie si l'utilisateur courant a accès au panel
+ * admin. Utilisé par la sidebar (pour afficher/cacher le menu admin)
+ * et par la page admin elle-même (redirection si non admin).
+ */
 export function useAdminAccess() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -32,6 +37,7 @@ export function useAdminAccess() {
   return { isAdmin, isLoading };
 }
 
+/** Hook de chargement des statistiques globales du panel admin. */
 export function useAdminStats() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +63,7 @@ export function useAdminStats() {
   return { stats, isLoading, error, refetch: fetchStats };
 }
 
+/** Paramètres par défaut du listing utilisateurs (page 1, 10 par page, tri création desc). */
 const DEFAULT_PARAMS: ListUsersParams = {
   page: 1,
   limit: 10,
@@ -69,6 +76,15 @@ const DEFAULT_PARAMS: ListUsersParams = {
   order: 'DESC',
 };
 
+/**
+ * Hook orchestrant le CRUD avancé sur les utilisateurs côté admin.
+ *
+ * Gère :
+ *  - l'état des paramètres de recherche/filtrage/tri/pagination,
+ *  - le rechargement automatique de la liste quand les params changent,
+ *  - les actions de mutation (rôle, email, mdp, ban, restore, delete),
+ *  - l'export CSV.
+ */
 export function useAdminUsers() {
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -81,7 +97,7 @@ export function useAdminUsers() {
     try {
       setIsLoading(true);
       setError(null);
-      // Strip empty strings so we don't send blank role/q filters.
+      // On enlève les filtres vides pour ne pas polluer la query string.
       const clean: ListUsersParams = { ...params };
       if (!clean.q) delete clean.q;
       if (!clean.role) delete clean.role;
@@ -100,7 +116,11 @@ export function useAdminUsers() {
     fetchUsers();
   }, [fetchUsers]);
 
-  /** Merge new params; any change other than `page` resets back to page 1. */
+  /**
+   * Merge des nouveaux paramètres. Tout changement autre que `page`
+   * remet le numéro de page à 1 (sinon on resterait sur une page qui
+   * peut ne plus exister après filtrage).
+   */
   const setParams = useCallback((patch: Partial<ListUsersParams>) => {
     setParamsState((prev) => {
       const next = { ...prev, ...patch };
@@ -179,6 +199,11 @@ export function useAdminUsers() {
     }
   };
 
+  /**
+   * Lance le téléchargement CSV. On reprend les filtres courants (mais
+   * on enlève `page`/`limit` : l'export retourne *toutes* les lignes
+   * correspondantes).
+   */
   const exportCsv = async () => {
     const clean: ListUsersParams = { ...params };
     delete clean.page;
@@ -207,6 +232,7 @@ export function useAdminUsers() {
   };
 }
 
+/** Paramètres par défaut du journal d'audit (page 1, 15 par page, DESC). */
 const DEFAULT_AUDIT_PARAMS: ListAuditParams = {
   page: 1,
   limit: 15,
@@ -215,6 +241,12 @@ const DEFAULT_AUDIT_PARAMS: ListAuditParams = {
   order: 'DESC',
 };
 
+/**
+ * Hook de consultation du journal d'audit côté admin.
+ * Même pattern que `useAdminUsers` : état des params, rechargement
+ * automatique sur changement, setter qui réinitialise la pagination
+ * quand un filtre change.
+ */
 export function useAdminAudit() {
   const [items, setItems] = useState<AuditLogItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -233,7 +265,7 @@ export function useAdminAudit() {
       setTotal(data.total);
       setTotalPages(data.totalPages);
     } catch {
-      /* silencieux — l'audit est secondaire */
+      /* silencieux — l'audit est secondaire, on ne casse pas la page admin */
     } finally {
       setIsLoading(false);
     }
@@ -254,6 +286,7 @@ export function useAdminAudit() {
   return { items, total, totalPages, isLoading, params, setParams, refetch: fetchLogs };
 }
 
+/** Hook léger qui charge la liste des rôles (pour le select du panel admin). */
 export function useAdminRoles() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -264,7 +297,8 @@ export function useAdminRoles() {
         const data = await adminService.getRoles();
         setRoles(data);
       } catch {
-        // Ignore error
+        // On ignore l'erreur : si les rôles ne chargent pas, le panel
+        // affiche juste le placeholder, pas de raison de casser la page.
       } finally {
         setIsLoading(false);
       }

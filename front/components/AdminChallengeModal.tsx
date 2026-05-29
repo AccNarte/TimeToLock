@@ -25,16 +25,28 @@ export interface AdminChallenge {
 
 interface AdminChallengeModalProps {
   open: boolean;
-  /** Human-readable description of what the admin is about to do. */
+  /** Description lisible de l'action que l'admin s'apprête à confirmer. */
   actionLabel: string;
-  /** Stable identifier (e.g. "role-change-7-admin") used inside the signed message for traceability. */
+  /** Identifiant stable (ex. "role-change-7-admin") injecté dans le message
+   *  signé pour traçabilité — repris dans l'audit log. */
   actionContext: string;
-  /** Optional extra UI (e.g. a reason field) shown above the auth challenge. */
+  /** Bloc optionnel rendu au-dessus du challenge (ex. champ « motif » pour un ban). */
   extraContent?: React.ReactNode;
   onCancel: () => void;
   onConfirm: (challenge: AdminChallenge) => Promise<void>;
 }
 
+/**
+ * Modale de re-authentification pour les actions admin sensibles.
+ *
+ * À l'ouverture, on demande au backend la méthode de challenge attendue
+ * pour l'admin connecté (`/admin/challenge-method`) :
+ *  - `password` → on affiche un input mot de passe ;
+ *  - `wallet`  → on demande une signature wallet horodatée.
+ *
+ * Une fois validée, le challenge est passé à `onConfirm` (qui appelle
+ * l'API métier avec ce challenge en pièce jointe).
+ */
 export function AdminChallengeModal({
   open,
   actionLabel,
@@ -56,7 +68,8 @@ export function AdminChallengeModal({
   const { address: connectedAddress, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
 
-  // Fetch the acting admin's auth method when the modal opens.
+  // À chaque ouverture, on (re)demande au backend la méthode de challenge
+  // attendue (password vs wallet) et on remet l'état à zéro.
   useEffect(() => {
     if (!open) return;
     setAuthMethod(null);

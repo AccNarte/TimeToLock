@@ -1,5 +1,6 @@
 import apiClient from '../client';
 
+/** Statistiques globales du panel admin. */
 export interface AdminStats {
   users: {
     total: number;
@@ -39,6 +40,7 @@ export interface AdminStats {
   };
 }
 
+/** Ligne de la table utilisateurs côté admin. */
 export interface UserListItem {
   id: number;
   email: string | null;
@@ -53,6 +55,7 @@ export interface UserListItem {
   createdAt: string;
 }
 
+/** Enveloppe paginée renvoyée par GET /admin/users. */
 export interface PaginatedUsers {
   items: UserListItem[];
   total: number;
@@ -61,6 +64,7 @@ export interface PaginatedUsers {
   totalPages: number;
 }
 
+/** Paramètres de query pour le listing utilisateurs. */
 export interface ListUsersParams {
   page?: number;
   limit?: number;
@@ -79,6 +83,7 @@ export interface Role {
   description: string | null;
 }
 
+/** Ligne du journal d'audit côté admin (format friendly avec joins). */
 export interface AuditLogItem {
   id: number;
   action: string | null;
@@ -92,6 +97,7 @@ export interface AuditLogItem {
   createdAt: string;
 }
 
+/** Enveloppe paginée renvoyée par GET /admin/audit. */
 export interface PaginatedAudit {
   items: AuditLogItem[];
   total: number;
@@ -100,6 +106,7 @@ export interface PaginatedAudit {
   totalPages: number;
 }
 
+/** Paramètres de query pour le journal d'audit. */
 export interface ListAuditParams {
   page?: number;
   limit?: number;
@@ -109,7 +116,17 @@ export interface ListAuditParams {
   order?: 'ASC' | 'DESC';
 }
 
+/**
+ * Client HTTP du panel admin.
+ *
+ * Toutes les méthodes ciblent les endpoints `/api/admin/**` du backend
+ * (gardés par `JwtAuthGuard` + `ensureAdmin` côté NestJS). Les actions
+ * sensibles (ban / role / email / mdp / delete) embarquent un objet
+ * `challenge` (mot de passe OU signature wallet) que le backend
+ * re-vérifie avant la mutation.
+ */
 export const adminService = {
+  /** Vérification légère : l'utilisateur courant a-t-il accès au panel ? */
   async checkAccess(): Promise<{ isAdmin: boolean }> {
     try {
       const response = await apiClient.get<{ isAdmin: boolean }>('/admin/check-access');
@@ -146,7 +163,11 @@ export const adminService = {
     return response.data;
   },
 
-  /** Download the filtered user set as a CSV file (triggers a browser save). */
+  /**
+   * Télécharge l'ensemble filtré au format CSV (déclenche un download
+   * dans le navigateur). Construit l'URL via `URL.createObjectURL`
+   * pour éviter une redirection complète.
+   */
   async exportUsersCsv(params: ListUsersParams = {}): Promise<void> {
     const response = await apiClient.get('/admin/users/export', {
       params,
@@ -179,6 +200,10 @@ export const adminService = {
     return response.data;
   },
 
+  /**
+   * Indique au front la méthode de challenge attendue pour l'admin
+   * connecté (`password` ou `wallet`) — sert à afficher la bonne modale.
+   */
   async getChallengeMethod(): Promise<{
     method: 'wallet' | 'password';
     walletAddress: string | null;

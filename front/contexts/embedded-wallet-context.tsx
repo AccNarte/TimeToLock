@@ -6,7 +6,7 @@ import { getWalletFromEncrypted, validatePassword } from '@/lib/embedded-wallet'
 import { walletsService, EmbeddedWalletData } from '@/lib/api/services/wallets.service';
 
 interface EmbeddedWalletContextType {
-  // State
+  // État
   isUnlocked: boolean;
   unlockedWalletId: number | null;
   unlockedAddress: string | null;
@@ -18,7 +18,7 @@ interface EmbeddedWalletContextType {
   signMessage: (message: string) => Promise<string>;
   getWallet: () => ethers.Wallet | null;
 
-  // Password modal
+  // Modale de saisie du mot de passe
   requestUnlock: (walletId: number, address: string) => Promise<boolean>;
   isPasswordModalOpen: boolean;
   pendingWalletId: number | null;
@@ -29,45 +29,52 @@ interface EmbeddedWalletContextType {
 
 const EmbeddedWalletContext = createContext<EmbeddedWalletContextType | undefined>(undefined);
 
-// Polygon mainnet RPC (free, no auth required)
+// RPC public Polygon Mainnet (gratuit, sans auth).
 const POLYGON_RPC = 'https://polygon-bor-rpc.publicnode.com';
 
+/**
+ * Provider du contexte « wallet embarqué » :
+ *  - garde en mémoire le wallet ethers déverrouillé,
+ *  - expose `signMessage` / `signTransaction` pour signer sans MetaMask,
+ *  - gère la modale globale de saisie du mot de passe via le pattern
+ *    « request-unlock → Promise<boolean> » : n'importe quel composant
+ *    peut demander un déverrouillage et attendre la résolution.
+ */
 export function EmbeddedWalletProvider({ children }: { children: React.ReactNode }) {
-  // Unlocked wallet state
+  // État du wallet déverrouillé.
   const [unlockedWallet, setUnlockedWallet] = useState<ethers.Wallet | null>(null);
   const [unlockedWalletId, setUnlockedWalletId] = useState<number | null>(null);
   const [unlockedAddress, setUnlockedAddress] = useState<string | null>(null);
   const [encryptedData, setEncryptedData] = useState<EmbeddedWalletData | null>(null);
 
-  // Ref mirror of the unlocked wallet. State alone is not enough: callers that
-  // `await requestUnlock(...)` then read the wallet do so within the same tick,
-  // before React re-renders — a memoized getter closed over `unlockedWallet`
-  // would still see `null`. The ref is always current, so `getWallet()` works
-  // immediately after an unlock resolves.
+  // Miroir `useRef` du wallet déverrouillé. Indispensable : un appelant qui
+  // fait `await requestUnlock(...)` puis lit le wallet dans le MÊME tick
+  // (avant que React ne re-rende) verrait un getter mémoïsé sur l'ancien
+  // état (donc `null`). La ref, elle, est toujours à jour, donc
+  // `getWallet()` renvoie le bon wallet juste après le déverrouillage.
   const unlockedWalletRef = useRef<ethers.Wallet | null>(null);
 
-  // Password modal state
+  // État de la modale de saisie du mot de passe.
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [pendingWalletId, setPendingWalletId] = useState<number | null>(null);
   const [pendingWalletAddress, setPendingWalletAddress] = useState<string | null>(null);
   const [unlockResolver, setUnlockResolver] = useState<((success: boolean) => void) | null>(null);
 
-  /**
-   * Unlock a wallet with password
-   */
+  /** Déverrouille un wallet avec son mot de passe (déchiffre la clé privée). */
   const unlockWallet = useCallback(async (walletId: number, password: string): Promise<boolean> => {
     try {
-      // Fetch encrypted data
+      // Récupération du blob chiffré depuis le backend.
       const data = await walletsService.getEncryptedData(walletId);
       setEncryptedData(data);
 
-      // Create provider
+      // Création du provider RPC pour signer/envoyer des transactions.
       const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
 
-      // Decrypt and create wallet
+      // Déchiffrement de la clé privée et construction du wallet ethers.
       const wallet = await getWalletFromEncrypted(data.encryptedPrivateKey, password, provider);
 
-      // Validate the address matches
+      // Sanity check : l'adresse dérivée doit correspondre à celle attendue
+      // (protection contre une compromission du blob côté serveur).
       const isValid = wallet.address.toLowerCase() === pendingWalletAddress?.toLowerCase();
       if (!isValid) {
         throw new Error('Address mismatch');
@@ -85,9 +92,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     }
   }, [pendingWalletAddress]);
 
-  /**
-   * Lock the wallet (clear from memory)
-   */
+  /** Verrouille le wallet (efface la clé privée déchiffrée de la mémoire). */
   const lockWallet = useCallback(() => {
     unlockedWalletRef.current = null;
     setUnlockedWallet(null);
@@ -96,9 +101,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     setEncryptedData(null);
   }, []);
 
-  /**
-   * Sign a transaction with the unlocked wallet
-   */
+  /** Signe et envoie une transaction avec le wallet déverrouillé. */
   const signTransaction = useCallback(async (tx: ethers.TransactionRequest): Promise<ethers.TransactionResponse> => {
     if (!unlockedWallet) {
       throw new Error('Wallet not unlocked');
@@ -106,9 +109,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     return unlockedWallet.sendTransaction(tx);
   }, [unlockedWallet]);
 
-  /**
-   * Sign a message with the unlocked wallet
-   */
+  /** Signe un message avec le wallet déverrouillé. */
   const signMessage = useCallback(async (message: string): Promise<string> => {
     if (!unlockedWallet) {
       throw new Error('Wallet not unlocked');
@@ -116,16 +117,16 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     return unlockedWallet.signMessage(message);
   }, [unlockedWallet]);
 
-  /**
-   * Get the unlocked wallet instance
-   */
+  /** Renvoie l'instance du wallet ethers déverrouillé (via la ref, toujours à jour). */
   const getWallet = useCallback((): ethers.Wallet | null => {
     return unlockedWalletRef.current;
   }, []);
 
   /**
-   * Request unlock via password modal
-   * Returns a promise that resolves when user enters password or cancels
+   * Demande de déverrouillage du wallet via la modale de mot de passe.
+   * Renvoie une Promise qui se résout quand l'utilisateur entre son mot
+   * de passe (true) ou annule (false). Le résolveur est stocké dans
+   * `unlockResolver` pour être appelé depuis `onPasswordSubmit`/Cancel.
    */
   const requestUnlock = useCallback((walletId: number, address: string): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -137,8 +138,9 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
   }, []);
 
   /**
-   * Handle password submission from modal
-   * Returns true on success, throws on failure
+   * Soumission du mot de passe par la modale. Renvoie true en cas de
+   * succès, lève sinon (la modale reste ouverte pour permettre une
+   * nouvelle tentative).
    */
   const onPasswordSubmit = useCallback(async (password: string): Promise<boolean> => {
     if (!pendingWalletId || !unlockResolver) {
@@ -148,7 +150,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     const success = await unlockWallet(pendingWalletId, password);
 
     if (!success) {
-      // Don't close modal, let user retry
+      // Mot de passe incorrect : on ne ferme PAS la modale (retry possible).
       throw new Error('Mot de passe incorrect');
     }
 
@@ -161,9 +163,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
     return true;
   }, [pendingWalletId, unlockResolver, unlockWallet]);
 
-  /**
-   * Handle password modal cancel
-   */
+  /** Annulation par l'utilisateur (clic sur Annuler ou ESC). */
   const onPasswordCancel = useCallback(() => {
     setIsPasswordModalOpen(false);
     setPendingWalletId(null);

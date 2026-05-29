@@ -143,7 +143,8 @@ export default function AdminPage() {
   const [emailDraft, setEmailDraft] = useState('');
   const [savingEmailFor, setSavingEmailFor] = useState<number | null>(null);
 
-  // Debounced search: type freely, fire the query 350ms after the last keypress.
+  // Recherche debouncée : on attend 350 ms après la dernière frappe avant
+  // de déclencher la requête (évite un fetch à chaque caractère tapé).
   const [searchInput, setSearchInput] = useState('');
   useEffect(() => {
     const t = setTimeout(() => {
@@ -153,7 +154,7 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
 
-  // Click a column header to sort; click again to flip direction.
+  // Clic sur un en-tête de colonne pour trier ; re-clic pour inverser le sens.
   const toggleSort = (col: 'id' | 'email' | 'createdAt' | 'status') => {
     if (params.sort === col) {
       setParams({ order: params.order === 'ASC' ? 'DESC' : 'ASC' });
@@ -248,7 +249,8 @@ export default function AdminPage() {
   }, [accessLoading, isAdmin, router]);
 
   const handleRoleChange = (userId: number, userEmail: string | null, newRole: string) => {
-    // Open the challenge modal — the actual mutation happens after confirmation.
+    // On ouvre la modale de challenge — la mutation effective n'a lieu
+    // qu'après la confirmation (mot de passe ou signature wallet).
     setPendingRoleChange({ userId, userEmail, newRole });
   };
 
@@ -260,7 +262,7 @@ export default function AdminPage() {
       toast.success('Role modifie avec succes');
       setPendingRoleChange(null);
     } catch (err: any) {
-      // Re-throw so the modal shows the error inline.
+      // On re-lance pour que la modale affiche l'erreur en place.
       throw err;
     } finally {
       setChangingRoleFor(null);
@@ -296,7 +298,7 @@ export default function AdminPage() {
     return null;
   }
 
-  // Helper to render one metric inside a flat band — no card chrome.
+  // Helper de rendu d'une métrique dans la bande plate — sans habillage carte.
   const Metric = ({
     label,
     value,
@@ -327,7 +329,7 @@ export default function AdminPage() {
     );
   };
 
-  // Each domain section: a sticky-style label + flat metrics row, no card.
+  // Une section par domaine : libellé latéral + rangée de métriques à plat.
   const Section = ({
     label,
     title,
@@ -435,7 +437,7 @@ export default function AdminPage() {
         </div>
       ) : null}
 
-      {/* ─── Users management (advanced CRUD) ─── */}
+      {/* ─── Gestion des utilisateurs (CRUD avancé) ─── */}
       <section className="mt-10">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
@@ -470,7 +472,7 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Filtres */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <Select value={params.status} onValueChange={(v) => setParams({ status: v as any })}>
             <SelectTrigger className="w-32 h-8 text-[12px] bg-transparent border-[var(--glass-border)]">
