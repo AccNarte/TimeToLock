@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Plus, Wallet as WalletIcon, Loader2, Coins, Network, Key } from 'lucide-react';
+import { Plus, Wallet as WalletIcon, Loader2, Coins, Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -21,32 +21,49 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { useWallets } from '@/hooks/use-wallets';
+import { useWallets } from '@/hooks/use-wallets-query';
 import { useAccount, useBalance, useChainId } from '@/hooks/use-web3';
 import { useTokenBalances, useMultiChainTokenBalances, useChainInfo } from '@/hooks/use-tokens';
+import { useSignMessage } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useAuth } from '@/contexts/auth-context';
+import { generateEncryptedWallet } from '@/lib/embedded-wallet';
+import { walletsService } from '@/lib/api/services/wallets.service';
+import { buildKeyDerivationMessage, isWalletLoginUser } from '@/lib/wallet-derived-key';
 import { formatWalletAddress, formatShortDate } from '@/lib/formatters';
 import { MnemonicDisplayDialog } from '@/components/MnemonicDisplayDialog';
-import { ExportMnemonicDialog } from '@/components/export-mnemonic-dialog';
+import { WrongNetworkPrompt } from '@/components/WrongNetworkPrompt';
 
 export default function WalletsPage() {
-  const { wallets, isLoading, error, createInternal, linkExternal, exportMnemonic } = useWallets();
+  const { wallets, isLoading, error, createInternal, linkExternal } = useWallets();
   const { address, isConnected } = useAccount();
   const currentChainId = useChainId();
   const { data: nativeBalance } = useBalance({ address });
+  const { user } = useAuth();
+  const { signMessageAsync } = useSignMessage();
+  const { openConnectModal } = useConnectModal();
+
+  // Wallet-login users have no account password — they encrypt/decrypt their
+  // embedded wallet with a signature from their reference (external) wallet.
+  const useSignatureFlow = isWalletLoginUser(user?.email);
+  const referenceWallet = wallets.find((w) => w.type === 'external');
   
-  // Networks to check - default: all supported networks
-  const [selectedNetworks, setSelectedNetworks] = useState<number[]>([1, 137, 80002]);
+  // Networks to check - beta defaults to Polygon only (Ethereum gas too expensive,
+  // other chains gated behind `comingSoon`).
+  const [selectedNetworks, setSelectedNetworks] = useState<number[]>([137]);
   const { tokensByChain, isLoading: tokensLoading, totalTokens } = useMultiChainTokenBalances(selectedNetworks);
   const currentChainInfo = useChainInfo();
-  
-  const availableNetworks = [
-    { id: 1, name: 'Ethereum', testnet: false },
+
+  const availableNetworks: Array<{ id: number; name: string; testnet: boolean; comingSoon?: boolean }> = [
     { id: 137, name: 'Polygon', testnet: false },
-    { id: 80002, name: 'Polygon Amoy', testnet: true },
+    { id: 1, name: 'Ethereum', testnet: false, comingSoon: true },
+    { id: 80002, name: 'Polygon Amoy', testnet: true, comingSoon: true },
   ];
-  
+
   const toggleNetwork = (chainId: number) => {
-    setSelectedNetworks(prev => 
+    const network = availableNetworks.find(n => n.id === chainId);
+    if (network?.comingSoon) return;
+    setSelectedNetworks(prev =>
       prev.includes(chainId)
         ? prev.filter(id => id !== chainId)
         : [...prev, chainId]
@@ -58,31 +75,14 @@ export default function WalletsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   
-  // Mnemonic dialog state
+  // Mnemonic dialog state (shown once right after creation)
   const [isMnemonicDialogOpen, setIsMnemonicDialogOpen] = useState(false);
   const [newWalletMnemonic, setNewWalletMnemonic] = useState<string>('');
   const [newWalletAddress, setNewWalletAddress] = useState<string>('');
 
-  // Export mnemonic dialog state
-  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const [exportWalletId, setExportWalletId] = useState<string | null>(null);
-  const [exportWalletAddress, setExportWalletAddress] = useState<string>('');
-
   const handleAddWallet = () => {
     setSubmitError(null);
     setIsModalOpen(true);
-  };
-
-  const handleExportMnemonic = (walletId: string, walletAddress: string) => {
-    setExportWalletId(walletId);
-    setExportWalletAddress(walletAddress);
-    setIsExportDialogOpen(true);
-  };
-
-  const handleExportClose = () => {
-    setIsExportDialogOpen(false);
-    setExportWalletId(null);
-    setExportWalletAddress('');
   };
 
   const handleConnectMetaMask = () => {
@@ -90,17 +90,49 @@ export default function WalletsPage() {
     setIsModalOpen(false);
   };
 
+  /**
+   * Ask the reference wallet to sign the deterministic derivation message and
+   * return the signature, which is used as the embedded wallet's encryption
+   * secret. Throws (with a user-friendly message) if no wallet is connected
+   * or the user is signed in via a different wallet than their reference.
+   */
+  const deriveSecretFromReferenceWallet = async (): Promise<string> => {
+    if (!referenceWallet) {
+      throw new Error('Aucun wallet de référence trouvé sur ton compte.');
+    }
+    if (!isConnected || !address) {
+      openConnectModal?.();
+      throw new Error('Connecte ton wallet de référence pour signer.');
+    }
+    if (address.toLowerCase() !== referenceWallet.address.toLowerCase()) {
+      throw new Error(
+        `Le wallet connecté ne correspond pas à ton wallet de référence (${formatWalletAddress(referenceWallet.address)}).`
+      );
+    }
+    return signMessageAsync({ message: buildKeyDerivationMessage(user!.id) });
+  };
+
   const handleCreateInternal = async () => {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      const response = await createInternal({ provider: 'ethers' });
-      // Show mnemonic dialog
-      setNewWalletMnemonic(response.mnemonic);
-      setNewWalletAddress(response.wallet.address);
-      setIsMnemonicDialogOpen(true);
+      if (useSignatureFlow) {
+        // Wallet-login users: derive key from a signature, encrypt client-side.
+        const secret = await deriveSecretFromReferenceWallet();
+        const { walletData, mnemonic } = await generateEncryptedWallet(secret);
+        const response = await walletsService.createEmbedded(walletData);
+        setNewWalletMnemonic(mnemonic);
+        setNewWalletAddress(response.wallet.address);
+        setIsMnemonicDialogOpen(true);
+      } else {
+        // Email/password users: server-side managed (legacy flow).
+        const response = await createInternal({ provider: 'ethers' });
+        setNewWalletMnemonic(response.mnemonic);
+        setNewWalletAddress(response.wallet.address);
+        setIsMnemonicDialogOpen(true);
+      }
     } catch (err: any) {
-      setSubmitError(err.message || 'Erreur lors de la création du wallet');
+      setSubmitError(err.shortMessage || err.message || 'Erreur lors de la création du wallet');
     } finally {
       setIsSubmitting(false);
     }
@@ -179,15 +211,23 @@ export default function WalletsPage() {
                 Réseau connecté
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {!currentChainInfo.supported && <WrongNetworkPrompt />}
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
                   <p className="text-xs text-text-muted mb-1">Réseau actuel</p>
                   <div className="flex items-center gap-2">
-                    <p className="text-white text-lg font-semibold">{currentChainInfo.name}</p>
+                    <p className={`text-lg font-semibold ${currentChainInfo.supported ? 'text-white' : 'text-warning'}`}>
+                      {currentChainInfo.name}
+                    </p>
                     {currentChainInfo.testnet && (
                       <Badge className="bg-warning/20 text-warning border-warning/30">
                         Testnet
+                      </Badge>
+                    )}
+                    {!currentChainInfo.supported && (
+                      <Badge className="bg-warning/20 text-warning border-warning/30">
+                        Non supporté
                       </Badge>
                     )}
                   </div>
@@ -231,14 +271,22 @@ export default function WalletsPage() {
                     onClick={() => toggleNetwork(network.id)}
                     variant={selectedNetworks.includes(network.id) ? 'default' : 'outline'}
                     size="sm"
+                    disabled={network.comingSoon}
                     className={
-                      selectedNetworks.includes(network.id)
-                        ? 'bg-cyan-neon/20 text-cyan-neon border-cyan-neon/30'
-                        : 'bg-glass-surface text-text-secondary border-glass-border hover:bg-glass-surface/50'
+                      network.comingSoon
+                        ? 'bg-glass-surface/30 text-text-muted border-glass-border/50 cursor-not-allowed opacity-60'
+                        : selectedNetworks.includes(network.id)
+                          ? 'bg-cyan-neon/20 text-cyan-neon border-cyan-neon/30'
+                          : 'bg-glass-surface text-text-secondary border-glass-border hover:bg-glass-surface/50'
                     }
                   >
                     {network.name}
-                    {network.testnet && (
+                    {network.comingSoon && (
+                      <Badge className="ml-2 bg-warning/20 text-warning border-warning/30 text-xs">
+                        Bientôt
+                      </Badge>
+                    )}
+                    {!network.comingSoon && network.testnet && (
                       <Badge className="ml-2 bg-warning/20 text-warning border-warning/30 text-xs">
                         Test
                       </Badge>
@@ -335,7 +383,6 @@ export default function WalletsPage() {
                   <TableHead className="text-text-secondary">Adresse</TableHead>
                   <TableHead className="text-text-secondary">Date de création</TableHead>
                   <TableHead className="text-text-secondary">Statut</TableHead>
-                  <TableHead className="text-text-secondary text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -368,19 +415,6 @@ export default function WalletsPage() {
                       <Badge className="bg-success/20 text-success border-success/30">
                         Actif
                       </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {wallet.type === 'internal' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleExportMnemonic(wallet.id, wallet.address)}
-                          className="h-8 px-2 text-text-muted hover:text-cyan-neon"
-                          title="Exporter la phrase de récupération"
-                        >
-                          <Key className="w-4 h-4" />
-                        </Button>
-                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -465,16 +499,6 @@ export default function WalletsPage() {
         mnemonic={newWalletMnemonic}
         walletAddress={newWalletAddress}
       />
-
-      {/* Export Mnemonic Dialog */}
-      {exportWalletId && (
-        <ExportMnemonicDialog
-          isOpen={isExportDialogOpen}
-          onClose={handleExportClose}
-          walletAddress={exportWalletAddress}
-          onExport={(password) => exportMnemonic(parseInt(exportWalletId), password)}
-        />
-      )}
     </div>
   );
 }

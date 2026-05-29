@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { FileText, Bitcoin, Wallet, Activity, Loader2, Link2, Shield, Key, Copy, Check, AlertTriangle } from 'lucide-react';
+import { FileText, Bitcoin, Wallet, Activity, Loader2, Link2, Shield, Key, Copy, Check, AlertTriangle, HelpCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { useAccount, useBalance, useChainId } from '@/hooks/use-web3';
 import { useTokenBalances, useChainInfo } from '@/hooks/use-tokens';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { getNativeBalance } from '@/lib/etherscan';
+import { WrongNetworkPrompt } from '@/components/WrongNetworkPrompt';
 import Link from 'next/link';
 
 export default function DashboardPage() {
@@ -105,11 +106,19 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-heading-1 text-white mb-2">Dashboard</h1>
-        <p className="text-text-secondary text-body">
-          Vue d'ensemble de vos actifs verrouillés
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-heading-1 text-white mb-2">Dashboard</h1>
+          <p className="text-text-secondary text-body">
+            Vue d'ensemble de vos actifs verrouillés
+          </p>
+        </div>
+        <Link href="/explication">
+          <Button variant="outline" size="sm" className="gap-1.5 border-glass-border text-text-secondary hover:text-white whitespace-nowrap">
+            <HelpCircle className="w-3.5 h-3.5" />
+            Comment ça marche
+          </Button>
+        </Link>
       </div>
 
       {/* Wallet Card - Shows embedded wallet, external wallet, or connect prompt */}
@@ -141,6 +150,7 @@ export default function DashboardPage() {
           {/* External wallet connected */}
           {isConnected ? (
             <div className="space-y-4">
+              {!chainInfo.supported && <WrongNetworkPrompt />}
               <div className="grid gap-4 md:grid-cols-3">
                 <div>
                   <p className="text-xs text-text-muted mb-1">Adresse</p>
@@ -151,10 +161,17 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs text-text-muted mb-1">Réseau</p>
                   <div className="flex items-center gap-2">
-                    <p className="text-white text-sm font-semibold">{chainInfo.name}</p>
+                    <p className={`text-sm font-semibold ${chainInfo.supported ? 'text-white' : 'text-warning'}`}>
+                      {chainInfo.name}
+                    </p>
                     {chainInfo.testnet && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
                         Testnet
+                      </span>
+                    )}
+                    {!chainInfo.supported && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
+                        Non supporté
                       </span>
                     )}
                   </div>
@@ -216,7 +233,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs text-text-muted mb-1">Solde POL (gas fees)</p>
                   {embeddedGasBalance !== null ? (
-                    <p className={`text-sm font-semibold ${embeddedGasBalance >= 20 ? 'text-success' : 'text-warning'}`}>
+                    <p className={`text-sm font-semibold ${embeddedGasBalance >= 1 ? 'text-success' : 'text-warning'}`}>
                       {embeddedGasBalance.toFixed(4)} POL
                     </p>
                   ) : (
@@ -226,14 +243,14 @@ export default function DashboardPage() {
               </div>
 
               {/* Gas Warning */}
-              {embeddedGasBalance !== null && embeddedGasBalance < 20 && (
+              {embeddedGasBalance !== null && embeddedGasBalance < 1 && (
                 <div className="p-3 rounded-lg bg-warning/10 border border-warning/30">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
                     <div>
                       <p className="text-sm text-warning font-medium">Solde POL insuffisant</p>
                       <p className="text-xs text-warning/80 mt-1">
-                        Vous avez besoin d'au moins 20 POL pour payer les frais de transaction.
+                        Vous avez besoin d'au moins 1 POL pour payer les frais de transaction.
                         Envoyez des POL à votre adresse ci-dessus.
                       </p>
                     </div>

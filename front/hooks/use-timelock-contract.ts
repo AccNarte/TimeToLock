@@ -5,9 +5,8 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { parseUnits, Address, parseEventLogs, erc20Abi } from 'viem';
 import TimelockFactoryABI from '@/lib/contracts/TimelockFactory.json';
 import TimelockVaultABI from '@/lib/contracts/TimelockVault.json';
+import { useFactoryAddress } from '@/hooks/use-factory-address';
 
-// Crypto TimeLock Factory address on Polygon
-const FACTORY_ADDRESS_POLYGON = (process.env.NEXT_PUBLIC_CRYPTO_TIMELOCK_FACTORY_POLYGON || '') as Address;
 const POLYGON_CHAIN_ID = 137;
 
 export interface CreateLockParams {
@@ -15,12 +14,15 @@ export interface CreateLockParams {
   amount: string; // in token units (e.g., "100" for 100 USDC)
   decimals: number;
   unlockTimestamp: number; // Unix timestamp
+  /** True when locking the chain's native coin (MATIC). Skips approve + uses payable createLockNative. */
+  isNative?: boolean;
 }
 
 export function useTimelockContract() {
   const { address, chainId } = useAccount();
   const [step, setStep] = useState<string>('');
   const [lockAddress, setLockAddress] = useState<Address | null>(null);
+  const { address: factoryAddressPolygon } = useFactoryAddress(POLYGON_CHAIN_ID, 'crypto_timelock');
 
   // Write contracts
   const {
@@ -75,42 +77,52 @@ export function useTimelockContract() {
       throw new Error('Please connect to Polygon network');
     }
 
-    if (!FACTORY_ADDRESS_POLYGON) {
+    if (!factoryAddressPolygon) {
       throw new Error('Factory address not configured');
     }
 
     setStep('Approving tokens...');
     const amountWei = parseUnits(amount, decimals);
 
-    console.log('Approving tokens:', { tokenAddress, amount, amountWei, factory: FACTORY_ADDRESS_POLYGON });
+    console.log('Approving tokens:', { tokenAddress, amount, amountWei, factory: factoryAddressPolygon });
 
     return writeApproveAsync({
       address: tokenAddress,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [FACTORY_ADDRESS_POLYGON, amountWei],
+      args: [factoryAddressPolygon, amountWei],
     });
   };
 
   /**
-   * Create a new timelock
+   * Create a new timelock. Branches on `isNative`:
+   *  - native (MATIC): calls `createLockNative(unlockTime)` payable with msg.value = amount
+   *  - ERC20: calls `createLock(token, amount, unlockTime)` (requires prior approve)
    */
   const createLock = async (params: CreateLockParams) => {
     if (!address || chainId !== POLYGON_CHAIN_ID) {
       throw new Error('Please connect to Polygon network');
     }
 
-    if (!FACTORY_ADDRESS_POLYGON) {
+    if (!factoryAddressPolygon) {
       throw new Error('Factory address not configured');
     }
 
     setStep('Creating lock...');
     const amountWei = parseUnits(params.amount, params.decimals);
 
-    console.log('Creating lock:', { params, amountWei, factory: FACTORY_ADDRESS_POLYGON });
+    if (params.isNative) {
+      return writeCreateLockAsync({
+        address: factoryAddressPolygon,
+        abi: TimelockFactoryABI,
+        functionName: 'createLockNative',
+        args: [BigInt(params.unlockTimestamp)],
+        value: amountWei,
+      });
+    }
 
     return writeCreateLockAsync({
-      address: FACTORY_ADDRESS_POLYGON,
+      address: factoryAddressPolygon,
       abi: TimelockFactoryABI,
       functionName: 'createLock',
       args: [params.tokenAddress, amountWei, BigInt(params.unlockTimestamp)],
@@ -208,7 +220,7 @@ export function useTimelockContract() {
     setStep,
 
     // Config
-    factoryAddress: FACTORY_ADDRESS_POLYGON,
+    factoryAddress: factoryAddressPolygon,
     chainId: POLYGON_CHAIN_ID,
   };
 }
@@ -256,13 +268,15 @@ export function useLockDetails(lockAddress: Address | null) {
  * Hook to check token allowance
  */
 export function useTokenAllowance(tokenAddress: Address | null, owner: Address | undefined) {
+  const { address: factoryAddressPolygon } = useFactoryAddress(POLYGON_CHAIN_ID, 'crypto_timelock');
+
   const { data: allowance, refetch } = useReadContract({
     address: tokenAddress || undefined,
     abi: erc20Abi,
     functionName: 'allowance',
-    args: owner && FACTORY_ADDRESS_POLYGON ? [owner, FACTORY_ADDRESS_POLYGON] : undefined,
+    args: owner && factoryAddressPolygon ? [owner, factoryAddressPolygon] : undefined,
     query: {
-      enabled: !!tokenAddress && !!owner && !!FACTORY_ADDRESS_POLYGON,
+      enabled: !!tokenAddress && !!owner && !!factoryAddressPolygon,
     },
   });
 

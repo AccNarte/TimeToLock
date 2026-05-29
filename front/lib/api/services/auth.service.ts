@@ -106,6 +106,18 @@ export const authService = {
     const response = await apiClient.get<{ isVerified: boolean; email: string }>('/auth/verification-status');
     return response.data;
   },
+
+  // Change password (email/password accounts only)
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ success: boolean }> {
+    const response = await apiClient.post<{ success: boolean }>('/auth/change-password', {
+      currentPassword,
+      newPassword,
+    });
+    return response.data;
+  },
 };
 
 

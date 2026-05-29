@@ -61,17 +61,39 @@ export default function SettingsPage() {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPassword !== confirmPassword) {
-      alert('Les mots de passe ne correspondent pas');
+    if (!oldPassword || !newPassword) {
+      toast.error('Remplis tous les champs');
       return;
     }
-    alert('Mot de passe changé avec succès');
-    setOldPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    if (newPassword.length < 8) {
+      toast.error('Le nouveau mot de passe doit faire au moins 8 caractères');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Les mots de passe ne correspondent pas');
+      return;
+    }
+    if (newPassword === oldPassword) {
+      toast.error("Le nouveau mot de passe doit être différent de l'ancien");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      await authService.changePassword(oldPassword, newPassword);
+      toast.success('Mot de passe changé avec succès');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Erreur lors du changement de mot de passe');
+    } finally {
+      setIsChangingPassword(false);
+    }
   };
 
   const handleChangeEmail = (e: React.FormEvent) => {
@@ -114,6 +136,8 @@ export default function SettingsPage() {
                   type="password"
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
+                  disabled={isChangingPassword}
+                  autoComplete="current-password"
                   className="bg-dark-blue-lighter border-glass-border text-white"
                 />
               </div>
@@ -127,6 +151,9 @@ export default function SettingsPage() {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
+                  disabled={isChangingPassword}
+                  autoComplete="new-password"
+                  placeholder="Au moins 8 caractères"
                   className="bg-dark-blue-lighter border-glass-border text-white"
                 />
               </div>
@@ -140,17 +167,27 @@ export default function SettingsPage() {
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={isChangingPassword}
+                  autoComplete="new-password"
                   className="bg-dark-blue-lighter border-glass-border text-white"
                 />
               </div>
 
               <div className="flex gap-3">
-                <Button type="submit" className="glass-button">
-                  Sauvegarder
+                <Button type="submit" disabled={isChangingPassword} className="glass-button">
+                  {isChangingPassword ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Enregistrement...
+                    </>
+                  ) : (
+                    'Sauvegarder'
+                  )}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
+                  disabled={isChangingPassword}
                   onClick={() => {
                     setOldPassword('');
                     setNewPassword('');

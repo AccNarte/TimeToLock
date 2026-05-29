@@ -4,13 +4,12 @@ import { useState, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useEmbeddedWallet } from '@/contexts/embedded-wallet-context';
 import { useWallets } from '@/hooks/use-wallets-query';
+import { useFactoryAddress } from '@/hooks/use-factory-address';
 import { walletsService } from '@/lib/api/services/wallets.service';
 import { getWalletFromEncrypted } from '@/lib/embedded-wallet';
 import TimelockFactoryABI from '@/lib/contracts/TimelockFactory.json';
 import TimelockVaultABI from '@/lib/contracts/TimelockVault.json';
 
-// Contract addresses
-const FACTORY_ADDRESS_POLYGON = process.env.NEXT_PUBLIC_CRYPTO_TIMELOCK_FACTORY_POLYGON || '';
 const POLYGON_RPC = 'https://polygon-bor-rpc.publicnode.com';
 const POLYGON_CHAIN_ID = 137;
 
@@ -26,6 +25,8 @@ export interface CreateLockParams {
   amount: string;
   decimals: number;
   unlockTimestamp: number;
+  /** True when locking the chain's native coin (MATIC). */
+  isNative?: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ export interface CreateLockParams {
 export function useEmbeddedTimelock() {
   const { wallets } = useWallets();
   const { requestUnlock, isUnlocked, getWallet } = useEmbeddedWallet();
+  const { address: factoryAddressPolygon } = useFactoryAddress(POLYGON_CHAIN_ID, 'crypto_timelock');
 
   const [isApproving, setIsApproving] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -80,6 +82,9 @@ export function useEmbeddedTimelock() {
     setStep('Demande de mot de passe...');
 
     try {
+      if (!factoryAddressPolygon) {
+        throw new Error('Factory non configurée pour Polygon. Déploie-la depuis /deploy.');
+      }
       const wallet = await getConnectedWallet();
       if (!wallet) {
         throw new Error('Impossible de déverrouiller le wallet');
@@ -92,7 +97,7 @@ export function useEmbeddedTimelock() {
       const amountWei = ethers.parseUnits(amount, decimals);
 
       // Send approval transaction
-      const tx = await tokenContract.approve(FACTORY_ADDRESS_POLYGON, amountWei);
+      const tx = await tokenContract.approve(factoryAddressPolygon, amountWei);
       setTxHash(tx.hash);
 
       setStep('Attente de confirmation...');
@@ -107,7 +112,7 @@ export function useEmbeddedTimelock() {
       setStep('');
       throw err;
     }
-  }, [getConnectedWallet]);
+  }, [getConnectedWallet, factoryAddressPolygon]);
 
   /**
    * Create a new timelock
@@ -121,6 +126,9 @@ export function useEmbeddedTimelock() {
     setStep('Demande de mot de passe...');
 
     try {
+      if (!factoryAddressPolygon) {
+        throw new Error('Factory non configurée pour Polygon. Déploie-la depuis /deploy.');
+      }
       const wallet = await getConnectedWallet();
       if (!wallet) {
         throw new Error('Impossible de déverrouiller le wallet');
@@ -130,19 +138,18 @@ export function useEmbeddedTimelock() {
 
       // Create factory contract instance
       const factoryContract = new ethers.Contract(
-        FACTORY_ADDRESS_POLYGON,
+        factoryAddressPolygon,
         TimelockFactoryABI,
         wallet
       );
 
       const amountWei = ethers.parseUnits(params.amount, params.decimals);
 
-      // Call createLock on factory
-      const tx = await factoryContract.createLock(
-        params.tokenAddress,
-        amountWei,
-        params.unlockTimestamp
-      );
+      // Native (MATIC) uses the payable createLockNative; ERC20 uses createLock
+      // (which expects a prior approve).
+      const tx = params.isNative
+        ? await factoryContract.createLockNative(params.unlockTimestamp, { value: amountWei })
+        : await factoryContract.createLock(params.tokenAddress, amountWei, params.unlockTimestamp);
       setTxHash(tx.hash);
 
       setStep('Attente de confirmation...');
@@ -178,7 +185,7 @@ export function useEmbeddedTimelock() {
       setStep('');
       throw err;
     }
-  }, [getConnectedWallet]);
+  }, [getConnectedWallet, factoryAddressPolygon]);
 
   /**
    * Withdraw from a timelock
@@ -228,10 +235,11 @@ export function useEmbeddedTimelock() {
     tokenAddress: string,
     ownerAddress: string
   ): Promise<bigint> => {
+    if (!factoryAddressPolygon) return BigInt(0);
     const provider = new ethers.JsonRpcProvider(POLYGON_RPC);
     const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-    return tokenContract.allowance(ownerAddress, FACTORY_ADDRESS_POLYGON);
-  }, []);
+    return tokenContract.allowance(ownerAddress, factoryAddressPolygon);
+  }, [factoryAddressPolygon]);
 
   return {
     // State
@@ -242,7 +250,7 @@ export function useEmbeddedTimelock() {
     error,
     txHash,
     lockAddress,
-    factoryAddress: FACTORY_ADDRESS_POLYGON,
+    factoryAddress: factoryAddressPolygon,
     chainId: POLYGON_CHAIN_ID,
     hasEmbeddedWallet: !!embeddedWallet,
     embeddedWalletAddress: embeddedWallet?.address || null,

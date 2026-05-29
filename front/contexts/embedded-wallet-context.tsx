@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import { getWalletFromEncrypted, validatePassword } from '@/lib/embedded-wallet';
 import { walletsService, EmbeddedWalletData } from '@/lib/api/services/wallets.service';
@@ -39,6 +39,13 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
   const [unlockedAddress, setUnlockedAddress] = useState<string | null>(null);
   const [encryptedData, setEncryptedData] = useState<EmbeddedWalletData | null>(null);
 
+  // Ref mirror of the unlocked wallet. State alone is not enough: callers that
+  // `await requestUnlock(...)` then read the wallet do so within the same tick,
+  // before React re-renders — a memoized getter closed over `unlockedWallet`
+  // would still see `null`. The ref is always current, so `getWallet()` works
+  // immediately after an unlock resolves.
+  const unlockedWalletRef = useRef<ethers.Wallet | null>(null);
+
   // Password modal state
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [pendingWalletId, setPendingWalletId] = useState<number | null>(null);
@@ -66,6 +73,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
         throw new Error('Address mismatch');
       }
 
+      unlockedWalletRef.current = wallet;
       setUnlockedWallet(wallet);
       setUnlockedWalletId(walletId);
       setUnlockedAddress(wallet.address);
@@ -81,6 +89,7 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
    * Lock the wallet (clear from memory)
    */
   const lockWallet = useCallback(() => {
+    unlockedWalletRef.current = null;
     setUnlockedWallet(null);
     setUnlockedWalletId(null);
     setUnlockedAddress(null);
@@ -111,8 +120,8 @@ export function EmbeddedWalletProvider({ children }: { children: React.ReactNode
    * Get the unlocked wallet instance
    */
   const getWallet = useCallback((): ethers.Wallet | null => {
-    return unlockedWallet;
-  }, [unlockedWallet]);
+    return unlockedWalletRef.current;
+  }, []);
 
   /**
    * Request unlock via password modal

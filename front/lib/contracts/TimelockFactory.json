@@ -126,6 +126,25 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "unlockTime",
+        "type": "uint256"
+      }
+    ],
+    "name": "createLockNative",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "lockAddress",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "getAllLocks",
     "outputs": [

@@ -19,7 +19,7 @@ const MetaMaskButton = dynamic(
       <Button
         type="button"
         disabled
-        className="w-full h-14 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold text-lg mb-6 shadow-lg hover:shadow-xl transition-all duration-300"
+        className="w-full h-11 bg-[#F6851B] hover:bg-[#E2761B] text-white font-medium text-sm mb-5 transition-colors"
       >
         <Wallet className="w-6 h-6 mr-3" />
         Chargement...

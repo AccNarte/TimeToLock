@@ -96,6 +96,50 @@ contract TimelockFactory is ReentrancyGuard {
     }
 
     /**
+     * @notice Create a new timelock vault for the chain's native coin (e.g. MATIC).
+     * @dev `msg.value` is the locked amount. Token field of the resulting vault
+     *      is the zero address (sentinel for native).
+     * @param unlockTime Timestamp when funds can be withdrawn
+     * @return lockAddress Address of the created vault
+     */
+    function createLockNative(
+        uint256 unlockTime
+    ) external payable nonReentrant returns (address lockAddress) {
+        if (msg.value == 0) revert InvalidAmount();
+        if (unlockTime <= block.timestamp) revert InvalidUnlockTime();
+
+        // Create vault with token=address(0) sentinel
+        TimelockVault vault = new TimelockVault(
+            msg.sender,
+            address(0),
+            msg.value,
+            unlockTime
+        );
+        lockAddress = address(vault);
+
+        // Forward the native funds to the vault. Bubble the error if the call
+        // fails (extremely unlikely since vault has a `receive()`).
+        (bool sent, ) = lockAddress.call{value: msg.value}("");
+        if (!sent) revert TransferFailed();
+
+        // Notify vault so it can sanity-check the balance and emit Locked.
+        vault.lockNative();
+
+        // Verify the lock was successful
+        ITimelockVault.LockStatus status = vault.getStatus();
+        if (status != ITimelockVault.LockStatus.LOCKED) revert LockCreationFailed();
+
+        // Track the lock
+        allLocks.push(lockAddress);
+        userLocks[msg.sender].push(lockAddress);
+        isValidLock[lockAddress] = true;
+
+        emit LockCreated(lockAddress, msg.sender, address(0), msg.value, unlockTime);
+
+        return lockAddress;
+    }
+
+    /**
      * @notice Get all locks created by a specific user
      * @param user Address of the user
      * @return Array of lock addresses

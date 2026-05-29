@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Source+Sans+3:wght@300;400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -42,6 +42,12 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /*
+   * Legacy color names kept (cyan-neon / dark-blue / glass-*) so existing
+   * Tailwind classes keep working without touching every component file.
+   * Their VALUES have been redefined below to match the new sober indigo+slate
+   * palette — no more neon.
+   */
   --color-cyan-neon: var(--cyan-neon);
   --color-dark-blue: var(--dark-blue);
   --color-dark-blue-lighter: var(--dark-blue-lighter);
@@ -58,55 +64,64 @@
 
 :root {
   --radius: 0.75rem;
-  --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
-  
-  /* TimeLock Theme Colors */
-  --cyan-neon: #00EEFF;
-  --dark-blue: #081B29;
-  --dark-blue-lighter: #0A2235;
-  --glass-surface: #0D2A3F;
-  --glass-border: #1A3F5C;
-  --text-secondary: #A0AEC0;
-  --text-muted: #718096;
-  --cyan-light: #5FFFFF;
-  --cyan-dark: #00B4B4;
-  --success: #00E676;
-  --warning: #FFB300;
-  --error: #FF3D00;
-  
-  /* Base theme - Dark mode default */
-  --background: #081B29;
-  --foreground: #FFFFFF;
-  --card: #0D2A3F;
-  --card-foreground: #FFFFFF;
-  --popover: #0D2A3F;
-  --popover-foreground: #FFFFFF;
-  --primary: #00EEFF;
-  --primary-foreground: #081B29;
-  --secondary: #1A3F5C;
-  --secondary-foreground: #FFFFFF;
-  --muted: #0A2235;
-  --muted-foreground: #A0AEC0;
-  --accent: #00EEFF;
-  --accent-foreground: #081B29;
-  --destructive: #FF3D00;
-  --border: #1A3F5C;
-  --input: #1A3F5C;
-  --ring: #00EEFF;
-  --chart-1: #00EEFF;
-  --chart-2: #5FFFFF;
-  --chart-3: #00B4B4;
-  --chart-4: #00E676;
-  --chart-5: #FFB300;
-  --sidebar: #0A2235;
-  --sidebar-foreground: #FFFFFF;
-  --sidebar-primary: #00EEFF;
-  --sidebar-primary-foreground: #081B29;
-  --sidebar-accent: #1A3F5C;
-  --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: #1A3F5C;
-  --sidebar-ring: #00EEFF;
+
+  /* ---------- New TimeLock palette (sober indigo + slate, no neon) -------- */
+  /* `--cyan-*` names are kept ONLY so legacy Tailwind classes (text-cyan-neon,
+     bg-cyan-light, etc.) compile to the new indigo values. Don't infer the
+     palette from the variable name — read the hex. */
+  --cyan-neon: #6366F1;        /* primary accent — indigo-500 */
+  --cyan-light: #818CF8;       /* indigo-400 */
+  --cyan-dark: #4338CA;        /* indigo-700 */
+
+  /* Surfaces — slate scale */
+  --dark-blue: #0F172A;        /* slate-900, app background */
+  --dark-blue-lighter: #1E293B;/* slate-800 */
+  --glass-surface: #1E293B;    /* card body */
+  --glass-border: #334155;     /* slate-700 borders */
+
+  /* Text */
+  --text-secondary: #CBD5E1;   /* slate-300 */
+  --text-muted: #94A3B8;       /* slate-400 */
+
+  /* Semantic */
+  --success: #10B981;          /* emerald-500 */
+  --warning: #F59E0B;          /* amber-500 */
+  --error: #EF4444;            /* red-500 */
+
+  /* shadcn/Radix tokens — all derive from the slate+indigo palette above */
+  --background: #0F172A;
+  --foreground: #F1F5F9;       /* slate-100 — softer than pure white */
+  --card: #1E293B;
+  --card-foreground: #F1F5F9;
+  --popover: #1E293B;
+  --popover-foreground: #F1F5F9;
+  --primary: #6366F1;
+  --primary-foreground: #F8FAFC;
+  --secondary: #334155;
+  --secondary-foreground: #F1F5F9;
+  --muted: #1E293B;
+  --muted-foreground: #94A3B8;
+  --accent: #6366F1;
+  --accent-foreground: #F8FAFC;
+  --destructive: #EF4444;
+  --border: #334155;
+  --input: #334155;
+  --ring: #6366F1;
+  --chart-1: #6366F1;
+  --chart-2: #818CF8;
+  --chart-3: #4338CA;
+  --chart-4: #10B981;
+  --chart-5: #F59E0B;
+  --sidebar: #0F172A;
+  --sidebar-foreground: #F1F5F9;
+  --sidebar-primary: #6366F1;
+  --sidebar-primary-foreground: #F8FAFC;
+  --sidebar-accent: #1E293B;
+  --sidebar-accent-foreground: #F1F5F9;
+  --sidebar-border: #1E293B;
+  --sidebar-ring: #6366F1;
 }
 
 @layer base {
@@ -114,87 +129,97 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-sans);
+    letter-spacing: -0.015em;
   }
 }
 
 @layer components {
+  /*
+   * Surface card. Solid slate-800 with a subtle border — no more frosted glass
+   * effect (the heavy backdrop-blur was the main "AI mainstream" signal).
+   */
   .glass-card {
-    @apply bg-glass-surface/40 backdrop-blur-xl border border-glass-border/50 rounded-lg shadow-lg;
+    @apply bg-[var(--glass-surface)] border border-[var(--glass-border)] rounded-xl;
   }
-  
+
+  /*
+   * Primary action button. Solid indigo, no glow / no neon ring. Subtle ring
+   * on focus for accessibility, light translate on press.
+   */
   .glass-button {
-    @apply bg-cyan-neon/10 border border-cyan-neon/30 text-cyan-neon transition-all duration-300;
+    @apply bg-[var(--cyan-neon)] text-white border border-transparent transition-colors duration-150;
   }
-  
   .glass-button:hover {
-    @apply bg-cyan-neon/20 border-cyan-neon;
-    box-shadow: 0 0 20px rgba(0, 238, 255, 0.3);
+    @apply bg-[var(--cyan-dark)];
   }
-  
+  .glass-button:focus-visible {
+    @apply outline-none ring-2 ring-[var(--cyan-light)] ring-offset-2 ring-offset-[var(--background)];
+  }
+  .glass-button:disabled {
+    @apply opacity-50 pointer-events-none;
+  }
+
+  /* Flat slate gradient — replaces the old saturated navy one. */
   .gradient-bg {
-    background: linear-gradient(135deg, #081B29 0%, #0A2235 50%, #0D2A3F 100%);
+    background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
   }
 }
 
 @utility text-heading-1 {
-  font-size: 2.5rem;
-  font-weight: 700;
-  line-height: 1.2;
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
 }
 
 @utility text-heading-2 {
-  font-size: 2rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
 }
 
 @utility text-heading-3 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
 }
 
 @utility text-body {
-  font-family: 'Source Sans 3', sans-serif;
-  font-size: 1rem;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 @utility text-body-sm {
-  font-family: 'Source Sans 3', sans-serif;
-  font-size: 0.875rem;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
   font-weight: 400;
   line-height: 1.5;
 }
 
-/* RainbowKit z-index fix - must be higher than any backdrop-blur stacking context */
-/* The dropdown portal is rendered directly in body */
+/* RainbowKit z-index fix — must be higher than any backdrop-blur stacking context */
 body > div:last-of-type:not(#__next):not([id]) {
   z-index: 99999 !important;
 }
-
-/* Catch all RainbowKit portals */
 [data-rk] {
   z-index: 99999 !important;
 }
-
-/* Radix popper used by RainbowKit */
 [data-radix-popper-content-wrapper] {
   z-index: 99999 !important;
 }
-
-/* All direct body children that look like portals */
 body > div[style*="position"] {
   z-index: 99999 !important;
 }
-
-/* RainbowKit specific class patterns */
 div[class^="iekbcc"],
 div[class*=" iekbcc"],
 div[class^="ju367v"],

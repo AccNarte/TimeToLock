@@ -92,10 +92,11 @@ export function useBlockchainFiles() {
     }
   };
 
-  const deleteFile = async (id: string) => {
+  const deleteFile = async (id: string): Promise<{ unpinned: boolean }> => {
     try {
-      await blockchainFilesService.delete(id);
+      const result = await blockchainFilesService.delete(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      return result;
     } catch (err) {
       setError('Erreur lors de la suppression');
       throw err;

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useChainInfo } from '@/hooks/use-tokens';
 import { useWallets } from '@/hooks/use-wallets-query';
 import { getNativeBalance } from '@/lib/etherscan';
+import { WrongNetworkPrompt } from '@/components/WrongNetworkPrompt';
 import Link from 'next/link';
 
 interface WalletButtonProps {
@@ -136,14 +137,14 @@ export function WalletButton({ className }: WalletButtonProps) {
                 <p className="text-xs text-text-muted mb-2">Solde POL (pour les gas fees)</p>
                 {embeddedBalance !== null ? (
                   <div>
-                    <p className={`text-lg font-bold ${embeddedBalance >= 20 ? 'text-success' : 'text-warning'}`}>
+                    <p className={`text-lg font-bold ${embeddedBalance >= 1 ? 'text-success' : 'text-warning'}`}>
                       {embeddedBalance.toFixed(4)} POL
                     </p>
-                    {embeddedBalance < 20 && (
+                    {embeddedBalance < 1 && (
                       <div className="mt-2 p-2 rounded bg-warning/10 border border-warning/30">
                         <p className="text-xs text-warning">
                           ⚠️ Solde insuffisant pour les transactions.
-                          Minimum recommandé : 20 POL
+                          Minimum recommandé : 1 POL
                         </p>
                       </div>
                     )}
@@ -214,17 +215,25 @@ export function WalletButton({ className }: WalletButtonProps) {
       {isDropdownOpen && (
         <div className="absolute right-0 mt-2 w-64 bg-[#0D2A3F] border border-glass-border rounded-lg shadow-2xl overflow-hidden" style={{ zIndex: 99999 }}>
           {/* Network */}
-          <div className="p-4 border-b border-glass-border">
+          <div className="p-4 border-b border-glass-border space-y-2">
             <p className="text-xs text-text-muted mb-1">Réseau</p>
             <div className="flex items-center gap-2">
-              <Network className="w-4 h-4 text-cyan-neon" />
-              <p className="text-sm font-semibold text-white">{chainInfo.name}</p>
+              <Network className={`w-4 h-4 ${chainInfo.supported ? 'text-cyan-neon' : 'text-warning'}`} />
+              <p className={`text-sm font-semibold ${chainInfo.supported ? 'text-white' : 'text-warning'}`}>
+                {chainInfo.name}
+              </p>
               {chainInfo.testnet && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
                   Testnet
                 </span>
               )}
+              {!chainInfo.supported && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
+                  Non supporté
+                </span>
+              )}
             </div>
+            {!chainInfo.supported && <WrongNetworkPrompt variant="compact" className="w-full justify-center" />}
           </div>
 
           {/* Balance */}

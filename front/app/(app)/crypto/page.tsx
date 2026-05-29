@@ -25,7 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { useCryptoLocks } from '@/hooks/use-crypto-locks-query';
 import { useWallets } from '@/hooks/use-wallets-query';
 import { useMultiChainTokenBalances, useEtherscanTokenBalances } from '@/hooks/use-tokens';
-import { useAccount, useSwitchChain } from '@/hooks/use-web3';
+import { useAccount, useBalance, useSwitchChain } from '@/hooks/use-web3';
 import { useTimelockContract, useTokenAllowance } from '@/hooks/use-timelock-contract';
 import { useEmbeddedTimelock } from '@/hooks/use-embedded-timelock';
 import { useEmbeddedWallet } from '@/contexts/embedded-wallet-context';
@@ -35,24 +35,33 @@ import { CryptoLock, CryptoLockStatus } from '@/lib/api/types';
 import { Address, parseUnits } from 'viem';
 import { toast } from 'sonner';
 import { getNativeBalance } from '@/lib/etherscan';
+import { CryptoRescueKitModal } from '@/components/CryptoRescueKitModal';
+import type { CryptoRescueKitData } from '@/lib/pdf/crypto-rescue-kit';
 
 // Supported networks for TimeLock
-const SUPPORTED_NETWORKS = [
+// Only Polygon is enabled for the beta (Ethereum gas fees too high).
+// Mark other networks `comingSoon: true` to keep them visible but disabled.
+const SUPPORTED_NETWORKS: Array<{ id: number; name: string; symbol: string; comingSoon?: boolean }> = [
   { id: 137, name: 'Polygon', symbol: 'MATIC' },
-  { id: 1, name: 'Ethereum', symbol: 'ETH' },
+  { id: 1, name: 'Ethereum', symbol: 'ETH', comingSoon: true },
 ];
 
-// Chain IDs to check for token balances
-const CHAIN_IDS_TO_CHECK = SUPPORTED_NETWORKS.map(n => n.id);
+// Chain IDs to check for token balances (only active networks)
+const CHAIN_IDS_TO_CHECK = SUPPORTED_NETWORKS.filter(n => !n.comingSoon).map(n => n.id);
 
-// Token addresses by chain
-const TOKEN_ADDRESSES_BY_CHAIN: Record<number, Record<string, { address: Address; decimals: number; tokenContractId: number }>> = {
+// Token addresses by chain.
+// Native MATIC uses the sentinel address(0) below; the contract uses the
+// `createLockNative` payable function to lock it via msg.value. ERC20 tokens
+// go through the standard approve + createLock flow.
+const NATIVE_SENTINEL = '0x0000000000000000000000000000000000000000' as Address;
+
+const TOKEN_ADDRESSES_BY_CHAIN: Record<number, Record<string, { address: Address; decimals: number; tokenContractId: number; isNative?: boolean }>> = {
   137: { // Polygon
-    'MATIC': { address: '0x0000000000000000000000000000000000001010' as Address, decimals: 18, tokenContractId: 1 },
+    'MATIC': { address: NATIVE_SENTINEL, decimals: 18, tokenContractId: 1, isNative: true },
+    'WMATIC': { address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270' as Address, decimals: 18, tokenContractId: 5 },
     'USDC': { address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' as Address, decimals: 6, tokenContractId: 2 },
     'USDT': { address: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F' as Address, decimals: 6, tokenContractId: 3 },
     'DAI': { address: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063' as Address, decimals: 18, tokenContractId: 4 },
-    'WMATIC': { address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270' as Address, decimals: 18, tokenContractId: 5 },
   },
   1: { // Ethereum
     'USDC': { address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' as Address, decimals: 6, tokenContractId: 11 },
@@ -63,6 +72,9 @@ const TOKEN_ADDRESSES_BY_CHAIN: Record<number, Record<string, { address: Address
 
 // Legacy single chain reference (for backward compatibility)
 const TOKEN_ADDRESSES = TOKEN_ADDRESSES_BY_CHAIN[137];
+
+// Minimum native POL recommended in an embedded wallet to cover gas fees.
+const MIN_GAS_POL = 1;
 
 export default function CryptoPage() {
   const { locks, isLoading: locksLoading, error: locksError, refetch: refetchLocks } = useCryptoLocks();
@@ -154,6 +166,7 @@ export default function CryptoPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [withdrawingLockId, setWithdrawingLockId] = useState<string | null>(null);
   const [embeddedGasBalance, setEmbeddedGasBalance] = useState<number | null>(null);
+  const [rescueKit, setRescueKit] = useState<CryptoRescueKitData | null>(null);
 
   // Fetch gas balance for embedded wallet via Etherscan API
   useEffect(() => {
@@ -167,17 +180,38 @@ export default function CryptoPage() {
     }
   }, [isUsingEmbedded, embeddedWallet?.address]);
 
-  const hasEnoughGas = embeddedGasBalance === null || embeddedGasBalance >= 20;
+  const hasEnoughGas = embeddedGasBalance === null || embeddedGasBalance >= MIN_GAS_POL;
 
   const isLoading = locksLoading || walletsLoading;
+
+  // Native chain balance for the connected external wallet (MATIC on Polygon).
+  // Embedded wallets reuse the already-fetched `embeddedGasBalance`.
+  const { data: externalNativeBalance } = useBalance({
+    address: isExternalConnected ? (externalAddress as Address | undefined) : undefined,
+    chainId: 137,
+    query: { enabled: isExternalConnected && selectedNetwork === 137 },
+  });
+
+  const polygonNativeBalance = useMemo(() => {
+    if (isUsingEmbedded) return embeddedGasBalance ?? 0;
+    if (externalNativeBalance) return parseFloat(externalNativeBalance.formatted);
+    return 0;
+  }, [isUsingEmbedded, embeddedGasBalance, externalNativeBalance]);
 
   // Get tokens for selected network from RPC balances
   const availableTokensForNetwork = useMemo(() => {
     const networkTokens = tokensByChain[selectedNetwork] || [];
-    // Merge with supported tokens (even if balance is 0)
-    const supportedTokenSymbols = Object.keys(TOKEN_ADDRESSES_BY_CHAIN[selectedNetwork] || {});
+    const supportedTokens = Object.entries(TOKEN_ADDRESSES_BY_CHAIN[selectedNetwork] || {});
 
-    return supportedTokenSymbols.map(symbol => {
+    return supportedTokens.map(([symbol, info]) => {
+      // Native MATIC: balance comes from eth_getBalance, not from an ERC20 contract.
+      if (info.isNative && selectedNetwork === 137) {
+        return {
+          symbol,
+          balance: polygonNativeBalance,
+          hasBalance: polygonNativeBalance > 0,
+        };
+      }
       const rpcToken = networkTokens.find(t => t.symbol === symbol);
       return {
         symbol,
@@ -185,7 +219,7 @@ export default function CryptoPage() {
         hasBalance: !!rpcToken && parseFloat(rpcToken.formatted) > 0,
       };
     });
-  }, [tokensByChain, selectedNetwork]);
+  }, [tokensByChain, selectedNetwork, polygonNativeBalance]);
 
   // Get token info for selected network and token
   const selectedTokenInfo = useMemo(() => {
@@ -204,10 +238,15 @@ export default function CryptoPage() {
   const availableBalance = useMemo(() => {
     if (!selectedToken || !selectedNetwork) return null;
 
+    const tokenInfo = TOKEN_ADDRESSES_BY_CHAIN[selectedNetwork]?.[selectedToken];
+    if (tokenInfo?.isNative && selectedNetwork === 137) {
+      return polygonNativeBalance;
+    }
+
     const networkTokens = tokensByChain[selectedNetwork] || [];
     const tokenBalance = networkTokens.find(token => token.symbol === selectedToken);
     return tokenBalance ? parseFloat(tokenBalance.formatted) : 0;
-  }, [selectedToken, selectedNetwork, tokensByChain]);
+  }, [selectedToken, selectedNetwork, tokensByChain, polygonNativeBalance]);
 
   // Reset token when network changes
   useEffect(() => {
@@ -247,6 +286,7 @@ export default function CryptoPage() {
         amount,
         decimals: selectedTokenInfo.decimals,
         unlockTimestamp,
+        isNative: selectedTokenInfo.isNative,
       });
     } catch (error: any) {
       console.error('Create lock error:', error);
@@ -274,8 +314,9 @@ export default function CryptoPage() {
       const amountWei = parseUnits(amount, selectedTokenInfo.decimals).toString();
 
       // Save to database (if wallet is registered, otherwise just show success)
+      let savedLockId: string | number = createReceipt.transactionHash.slice(0, 10);
       if (connectedWallet) {
-        await cryptoLocksService.saveLockFromFrontend({
+        const saved: any = await cryptoLocksService.saveLockFromFrontend({
           walletId: parseInt(connectedWallet.id),
           tokenContractId: selectedTokenInfo.tokenContractId,
           amountWei,
@@ -284,11 +325,31 @@ export default function CryptoPage() {
           lockContractAddress,
           chainId: selectedNetwork,
         });
+        if (saved?.id) savedLockId = saved.id;
       } else {
         console.warn('Wallet not registered in backend, lock saved on chain only');
       }
 
       toast.success('Lock créé avec succès !');
+
+      // Offer the user a printable rescue PDF — one-time chance, right after creation.
+      setRescueKit({
+        lockDbId: savedLockId,
+        vaultAddress: lockContractAddress,
+        ownerAddress: address,
+        chainId: selectedNetwork,
+        chainName: 'Polygon Mainnet',
+        createTxHash: createReceipt.transactionHash,
+        tokenSymbol: selectedToken,
+        tokenName: selectedToken,
+        isNative: !!selectedTokenInfo.isNative,
+        tokenContractAddress: selectedTokenInfo.isNative ? undefined : selectedTokenInfo.address,
+        tokenDecimals: selectedTokenInfo.decimals,
+        amountFormatted: amount,
+        amountWei,
+        createdAt: new Date(),
+        unlockAt: new Date(unlockDate),
+      });
 
       // Reset form
       setSelectedToken('');
@@ -338,14 +399,17 @@ export default function CryptoPage() {
         // ===== EMBEDDED WALLET FLOW =====
         const unlockTimestamp = Math.floor(new Date(unlockDate).getTime() / 1000);
 
-        // Check allowance for embedded wallet
-        const currentAllowance = await checkAllowance(tokenInfo.address, address);
-        const amountWei = BigInt(parseUnits(amount, tokenInfo.decimals).toString());
-        const needsApproval = currentAllowance < amountWei;
+        // Native MATIC skips the approve step (no ERC20 allowance involved).
+        let needsApproval = false;
+        if (!tokenInfo.isNative) {
+          const currentAllowance = await checkAllowance(tokenInfo.address, address);
+          const amountWei = BigInt(parseUnits(amount, tokenInfo.decimals).toString());
+          needsApproval = currentAllowance < amountWei;
 
-        if (needsApproval) {
-          toast.info('Étape 1/2 : Approbation des tokens...');
-          await approveTokenEmbedded(tokenInfo.address, amount, tokenInfo.decimals);
+          if (needsApproval) {
+            toast.info('Étape 1/2 : Approbation des tokens...');
+            await approveTokenEmbedded(tokenInfo.address, amount, tokenInfo.decimals);
+          }
         }
 
         toast.info(needsApproval ? 'Étape 2/2 : Création du lock...' : 'Création du lock...');
@@ -355,6 +419,7 @@ export default function CryptoPage() {
           amount,
           decimals: tokenInfo.decimals,
           unlockTimestamp,
+          isNative: tokenInfo.isNative,
         });
 
         // Save to DB
@@ -362,19 +427,41 @@ export default function CryptoPage() {
           w => w.address.toLowerCase() === address.toLowerCase()
         );
 
+        const amountWeiEmbedded = parseUnits(amount, tokenInfo.decimals).toString();
+        let savedLockIdEmbedded: string | number = result.txHash.slice(0, 10);
         if (connectedWallet) {
-          await cryptoLocksService.saveLockFromFrontend({
+          const saved: any = await cryptoLocksService.saveLockFromFrontend({
             walletId: parseInt(connectedWallet.id),
             tokenContractId: tokenInfo.tokenContractId,
-            amountWei: parseUnits(amount, tokenInfo.decimals).toString(),
+            amountWei: amountWeiEmbedded,
             unlockAt: new Date(unlockDate).toISOString(),
             txHash: result.txHash,
             lockContractAddress: result.lockAddress,
             chainId: selectedNetwork,
           });
+          if (saved?.id) savedLockIdEmbedded = saved.id;
         }
 
         toast.success('Lock créé avec succès !');
+
+        setRescueKit({
+          lockDbId: savedLockIdEmbedded,
+          vaultAddress: result.lockAddress,
+          ownerAddress: address,
+          chainId: selectedNetwork,
+          chainName: 'Polygon Mainnet',
+          createTxHash: result.txHash,
+          tokenSymbol: selectedToken,
+          tokenName: selectedToken,
+          isNative: !!tokenInfo.isNative,
+          tokenContractAddress: tokenInfo.isNative ? undefined : tokenInfo.address,
+          tokenDecimals: tokenInfo.decimals,
+          amountFormatted: amount,
+          amountWei: amountWeiEmbedded,
+          createdAt: new Date(),
+          unlockAt: new Date(unlockDate),
+        });
+
         setSelectedToken('');
         setAmount('');
         setUnlockDate('');
@@ -383,6 +470,13 @@ export default function CryptoPage() {
 
       } else {
         // ===== EXTERNAL WALLET FLOW =====
+        // Native MATIC: no approve, go straight to createLockNative.
+        if (tokenInfo.isNative) {
+          toast.info('Création du lock...');
+          await handleCreateLock();
+          return;
+        }
+
         const amountWei = parseUnits(amount, tokenInfo.decimals);
         const needsApproval = !allowance || allowance < amountWei;
 
@@ -604,26 +698,26 @@ export default function CryptoPage() {
 
               {/* Gas Balance Warning for Embedded Wallet */}
               {isUsingEmbedded && embeddedGasBalance !== null && (
-                <div className={`p-3 rounded-lg border ${embeddedGasBalance >= 20
+                <div className={`p-3 rounded-lg border ${embeddedGasBalance >= MIN_GAS_POL
                   ? 'bg-success/10 border-success/30'
                   : 'bg-warning/10 border-warning/30'}`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className={embeddedGasBalance >= 20 ? 'text-success' : 'text-warning'}>
-                        {embeddedGasBalance >= 20 ? '✓' : '⚠️'}
+                      <span className={embeddedGasBalance >= MIN_GAS_POL ? 'text-success' : 'text-warning'}>
+                        {embeddedGasBalance >= MIN_GAS_POL ? '✓' : '⚠️'}
                       </span>
                       <div>
-                        <p className={`text-sm font-medium ${embeddedGasBalance >= 20 ? 'text-success' : 'text-warning'}`}>
+                        <p className={`text-sm font-medium ${embeddedGasBalance >= MIN_GAS_POL ? 'text-success' : 'text-warning'}`}>
                           Solde POL pour les gas fees
                         </p>
-                        <p className={`text-xs ${embeddedGasBalance >= 20 ? 'text-success/80' : 'text-warning/80'}`}>
-                          {embeddedGasBalance >= 20
+                        <p className={`text-xs ${embeddedGasBalance >= MIN_GAS_POL ? 'text-success/80' : 'text-warning/80'}`}>
+                          {embeddedGasBalance >= MIN_GAS_POL
                             ? 'Solde suffisant pour les transactions'
-                            : 'Solde insuffisant - minimum recommandé : 20 POL'}
+                            : `Solde insuffisant - minimum recommandé : ${MIN_GAS_POL} POL`}
                         </p>
                       </div>
                     </div>
-                    <p className={`text-lg font-bold ${embeddedGasBalance >= 20 ? 'text-success' : 'text-warning'}`}>
+                    <p className={`text-lg font-bold ${embeddedGasBalance >= MIN_GAS_POL ? 'text-success' : 'text-warning'}`}>
                       {embeddedGasBalance.toFixed(4)} POL
                     </p>
                   </div>
@@ -641,8 +735,19 @@ export default function CryptoPage() {
                     </SelectTrigger>
                     <SelectContent className="bg-glass-surface border-glass-border">
                       {SUPPORTED_NETWORKS.map((network) => (
-                        <SelectItem key={network.id} value={network.id.toString()}>
-                          {network.name} ({network.symbol})
+                        <SelectItem
+                          key={network.id}
+                          value={network.id.toString()}
+                          disabled={network.comingSoon}
+                        >
+                          <span className="flex items-center justify-between w-full gap-4">
+                            <span>{network.name} ({network.symbol})</span>
+                            {network.comingSoon && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
+                                Bientôt
+                              </span>
+                            )}
+                          </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -860,6 +965,12 @@ export default function CryptoPage() {
           )}
         </CardContent>
       </Card>
+
+      <CryptoRescueKitModal
+        open={!!rescueKit}
+        data={rescueKit}
+        onClose={() => setRescueKit(null)}
+      />
     </div>
   );
 }

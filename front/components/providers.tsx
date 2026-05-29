@@ -6,6 +6,9 @@ import { AuthProvider } from '@/contexts/auth-context';
 import { EmbeddedWalletProvider } from '@/contexts/embedded-wallet-context';
 import { Toaster } from 'sonner';
 import { GlobalUnlockWalletModal } from '@/components/global-unlock-wallet-modal';
+import { silenceWalletAnalytics } from '@/lib/silence-wallet-analytics';
+
+silenceWalletAnalytics();
 
 // Dynamically import Web3Provider with SSR disabled
 const Web3Provider = dynamic(

@@ -106,9 +106,15 @@ export const blockchainFilesService = {
   },
 
   /**
-   * Delete a file lock record
+   * Permanently destroy a file lock: unpins from IPFS (so even admins
+   * can no longer recover the file) and deletes the DB row.
+   * Returns `{ unpinned: false }` if Pinata refused — the file may still
+   * linger on Pinata until manual cleanup, though the DB row is gone.
    */
-  async delete(id: string): Promise<void> {
-    await apiClient.delete(`/timelock-files-blockchain/${id}`);
+  async delete(id: string): Promise<{ unpinned: boolean }> {
+    const response = await apiClient.delete<{ unpinned: boolean }>(
+      `/timelock-files-blockchain/${id}`,
+    );
+    return response.data;
   },
 };

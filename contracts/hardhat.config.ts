@@ -28,6 +28,10 @@ const config: HardhatUserConfig = {
         : [],
       chainId: 137,
       gasPrice: "auto",
+      // Hardhat 2.27+ caps tx fees at 1 native unit by default. On Polygon that
+      // means a 1 MATIC ceiling, which a contract deploy can easily exceed
+      // during gas spikes. Raise it to 10 MATIC (~7€) for headroom.
+      txFeeCap: 10n * 10n ** 18n,
     },
     amoy: {
       url: process.env.AMOY_RPC_URL || "https://rpc-amoy.polygon.technology",
@@ -36,6 +40,7 @@ const config: HardhatUserConfig = {
         : [],
       chainId: 80002,
       gasPrice: "auto",
+      txFeeCap: 10n * 10n ** 18n, // same headroom on Amoy testnet
     },
   },
   etherscan: {

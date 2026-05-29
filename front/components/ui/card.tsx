@@ -7,7 +7,8 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card"
       className={cn(
-        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        // Hairline border, solid slate surface, no glow shadow, generous gap
+        "bg-[var(--glass-surface)] text-[var(--foreground)] flex flex-col gap-5 rounded-xl border border-[var(--glass-border)]/80 py-5",
         className
       )}
       {...props}
@@ -32,7 +33,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold", className)}
+      className={cn("text-[15px] leading-tight font-semibold tracking-tight", className)}
       {...props}
     />
   )
@@ -42,7 +43,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-muted-foreground text-sm", className)}
+      className={cn("text-[var(--text-muted)] text-[13px] leading-relaxed", className)}
       {...props}
     />
   )

@@ -126,6 +126,10 @@ export function useTokenBalances() {
   };
 }
 
+// Beta: only Polygon mainnet is fully supported. Other chains are flagged
+// `supported: false` so the UI can prompt the user to switch.
+export const SUPPORTED_CHAIN_ID = 137;
+
 export function useChainInfo(chainId?: number) {
   const currentChainId = useChainId();
   const targetChainId = chainId || currentChainId;
@@ -139,6 +143,7 @@ export function useChainInfo(chainId?: number) {
           symbol: 'ETH',
           explorer: 'https://etherscan.io',
           testnet: false,
+          supported: false,
         };
       case 137:
         return {
@@ -147,6 +152,7 @@ export function useChainInfo(chainId?: number) {
           symbol: 'MATIC',
           explorer: 'https://polygonscan.com',
           testnet: false,
+          supported: true,
         };
       case 80002:
         return {
@@ -155,6 +161,7 @@ export function useChainInfo(chainId?: number) {
           symbol: 'MATIC',
           explorer: 'https://amoy.polygonscan.com',
           testnet: true,
+          supported: false,
         };
       default:
         return {
@@ -163,6 +170,7 @@ export function useChainInfo(chainId?: number) {
           symbol: '?',
           explorer: '',
           testnet: false,
+          supported: false,
         };
     }
   }, [targetChainId]);

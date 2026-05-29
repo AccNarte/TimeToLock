@@ -111,19 +111,53 @@ export async function uploadJsonToIPFS(
   };
 }
 
+// Fallback gateways tried in order when the configured gateway returns
+// something unusable (auth required, not yet propagated, rate-limited, etc.).
+const FALLBACK_GATEWAYS = [
+  'https://gateway.pinata.cloud',
+  'https://ipfs.io',
+  'https://cloudflare-ipfs.com',
+  'https://dweb.link',
+];
+
 /**
- * Fetch a file from IPFS via gateway
+ * Try a single gateway. Returns the body if 2xx, otherwise an error with
+ * context to surface in logs.
+ */
+async function tryGateway(gateway: string, ipfsHash: string): Promise<ArrayBuffer> {
+  const url = `${gateway.replace(/\/$/, '')}/ipfs/${ipfsHash}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `${gateway} → HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`,
+    );
+  }
+  return response.arrayBuffer();
+}
+
+/**
+ * Fetch a file from IPFS. Tries the configured gateway first, then a series
+ * of public fallback gateways. Dedicated Pinata gateways sometimes require an
+ * access token or take a few seconds to propagate after a fresh pin — the
+ * fallbacks paper over both.
  */
 export async function fetchFromIPFS(ipfsHash: string): Promise<ArrayBuffer> {
-  const url = getGatewayUrl(ipfsHash);
+  const gatewaysToTry = [PINATA_GATEWAY, ...FALLBACK_GATEWAYS].filter(
+    (g, i, arr) => g && arr.indexOf(g) === i, // dedupe + drop empty
+  );
 
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch from IPFS: ${response.statusText}`);
+  const errors: string[] = [];
+  for (const gateway of gatewaysToTry) {
+    try {
+      return await tryGateway(gateway, ipfsHash);
+    } catch (err: any) {
+      errors.push(err.message || String(err));
+    }
   }
 
-  return response.arrayBuffer();
+  throw new Error(
+    `Failed to fetch from IPFS (${ipfsHash}). Tried gateways:\n  - ${errors.join('\n  - ')}`,
+  );
 }
 
 /**

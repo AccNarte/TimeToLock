@@ -5,9 +5,8 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { Address, parseEventLogs, Hex } from 'viem';
 import FileLockFactoryABI from '@/lib/contracts/FileLockFactory.json';
 import FileLockVaultABI from '@/lib/contracts/FileLockVault.json';
+import { useFactoryAddress } from '@/hooks/use-factory-address';
 
-// FileLock Factory address on Polygon
-const FILE_LOCK_FACTORY_POLYGON = (process.env.NEXT_PUBLIC_FILELOCK_FACTORY_POLYGON || '') as Address;
 const POLYGON_CHAIN_ID = 137;
 
 // Lock status enum matching the smart contract
@@ -27,6 +26,7 @@ export function useFileLockContract() {
   const { address, chainId } = useAccount();
   const [step, setStep] = useState<string>('');
   const [lockAddress, setLockAddress] = useState<Address | null>(null);
+  const { address: FILE_LOCK_FACTORY_POLYGON } = useFactoryAddress(POLYGON_CHAIN_ID, 'file_lock');
 
   // Write contract for creating a file lock
   const {
@@ -244,6 +244,8 @@ export function useFileLockEncryptionKey(lockAddress: Address | null, enabled: b
  * Hook to get user's file locks from factory
  */
 export function useUserFileLocks(userAddress: Address | undefined) {
+  const { address: FILE_LOCK_FACTORY_POLYGON } = useFactoryAddress(POLYGON_CHAIN_ID, 'file_lock');
+
   const { data: locks, refetch, isLoading } = useReadContract({
     address: FILE_LOCK_FACTORY_POLYGON || undefined,
     abi: FileLockFactoryABI,

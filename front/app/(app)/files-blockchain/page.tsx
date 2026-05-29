@@ -12,6 +12,8 @@ import {
   Link as LinkIcon,
   Shield,
   HardDrive,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,6 +45,7 @@ import { useBlockchainFiles } from '@/hooks/use-blockchain-files';
 import { useWallets } from '@/hooks/use-wallets-query';
 import { useAccount, useSwitchChain } from '@/hooks/use-web3';
 import { useFileLockContract, useReadEncryptedKey } from '@/hooks/use-file-lock-contract';
+import { useEmbeddedFileLock } from '@/hooks/use-embedded-file-lock';
 import { useSignMessage } from 'wagmi';
 import { formatFileSize, formatShortDate, formatWalletAddress } from '@/lib/formatters';
 import { BlockchainFileLock } from '@/lib/api/services/blockchain-files.service';
@@ -61,10 +64,43 @@ const POLYGON_CHAIN_ID = 137;
 type BlockchainFileLockStatus = 'LOCKED' | 'UNLOCKABLE' | 'UNLOCKED';
 
 export default function FilesBlockchainPage() {
-  const { files, stats, isLoading, error, refetch, createFileLock, markAsUnlocked, getIpfsUrl } = useBlockchainFiles();
+  const { files, stats, isLoading, error, refetch, createFileLock, markAsUnlocked, getIpfsUrl, deleteFile } = useBlockchainFiles();
+  const [fileToDestroy, setFileToDestroy] = useState<BlockchainFileLock | null>(null);
+  const [isDestroying, setIsDestroying] = useState(false);
+
+  const handleDestroy = async () => {
+    if (!fileToDestroy) return;
+    setIsDestroying(true);
+    try {
+      const result = await deleteFile(fileToDestroy.id);
+      if (result.unpinned) {
+        toast.success(`${fileToDestroy.filename} détruit. Pinata ne le sert plus.`);
+      } else {
+        toast.warning(
+          `${fileToDestroy.filename} supprimé en DB, mais l'unpin Pinata a échoué — le fichier peut encore être servi temporairement.`,
+        );
+      }
+      setFileToDestroy(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Erreur lors de la destruction');
+    } finally {
+      setIsDestroying(false);
+    }
+  };
+
   const { wallets, isLoading: walletsLoading } = useWallets();
   const { address, isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
+
+  // Embedded (internal) wallet support — lets email/password users lock files
+  // without MetaMask, mirroring the crypto page.
+  const embeddedFile = useEmbeddedFileLock();
+  const embeddedWallet = wallets.find((w) => w.type === 'internal');
+  const hasEmbeddedWallet = !!embeddedWallet;
+  // The app is "ready to interact" if an external wallet is connected OR the
+  // account has an embedded wallet.
+  const effectiveConnected = isConnected || hasEmbeddedWallet;
+  const effectiveAddress = isConnected ? address : embeddedWallet?.address;
 
   // File lock contract hooks
   const {
@@ -160,6 +196,13 @@ export default function FilesBlockchainPage() {
 
   const handleUpload = () => {
     setSubmitError(null);
+    // Pre-select a sensible default wallet: the connected external one if any,
+    // otherwise the embedded wallet (so email/password users don't have to pick).
+    if (!selectedWallet) {
+      const external = wallets.find((w) => isConnected && w.address.toLowerCase() === address?.toLowerCase());
+      const preset = external ?? embeddedWallet ?? wallets[0];
+      if (preset) setSelectedWallet(preset.id);
+    }
     setIsUploadModalOpen(true);
   };
 
@@ -171,7 +214,16 @@ export default function FilesBlockchainPage() {
 
   const handleSubmitUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile || !unlockDate || !address || !selectedWallet) return;
+    if (!selectedFile || !unlockDate || !selectedWallet) return;
+
+    // The signing wallet is the one picked in the dropdown.
+    const selWallet = wallets.find((w) => w.id === selectedWallet);
+    const useEmbedded = selWallet?.type === 'internal';
+
+    if (!useEmbedded && !address) {
+      setSubmitError('Connecte ton wallet externe (MetaMask) ou choisis ton wallet embarqué.');
+      return;
+    }
 
     // Check Pinata configuration
     if (!isPinataConfigured()) {
@@ -179,8 +231,8 @@ export default function FilesBlockchainPage() {
       return;
     }
 
-    // Check if connected to Polygon
-    if (chainId !== CONTRACT_CHAIN_ID) {
+    // External wallets must be on Polygon; embedded talks to Polygon RPC directly.
+    if (!useEmbedded && chainId !== CONTRACT_CHAIN_ID) {
       try {
         await switchChain({ chainId: CONTRACT_CHAIN_ID });
       } catch (error) {
@@ -189,8 +241,9 @@ export default function FilesBlockchainPage() {
       }
     }
 
-    // Check if factory is configured
-    if (!factoryAddress) {
+    // Factory must be deployed (same address regardless of wallet type).
+    const fileFactory = useEmbedded ? embeddedFile.factoryAddress : factoryAddress;
+    if (!fileFactory) {
       setSubmitError('Factory non configuree. Veuillez deployer les contrats d\'abord.');
       return;
     }
@@ -199,11 +252,13 @@ export default function FilesBlockchainPage() {
     setSubmitError(null);
 
     try {
-      // Step 1: Sign message for key derivation
-      setCurrentStep('Signature du message pour la derivation de cle...');
-      const signature = await signMessageAsync({
-        message: getKeyDerivationMessage(),
-      });
+      // Step 1: Sign message for key derivation (embedded ⇒ ethers, else MetaMask)
+      setCurrentStep(useEmbedded
+        ? 'Signature avec le wallet embarqué (mot de passe)...'
+        : 'Signature du message pour la derivation de cle...');
+      const signature = useEmbedded
+        ? await embeddedFile.signKeyDerivation()
+        : await signMessageAsync({ message: getKeyDerivationMessage() });
 
       // Step 2: Encrypt file
       setCurrentStep('Chiffrement du fichier...');
@@ -217,37 +272,63 @@ export default function FilesBlockchainPage() {
       const ipfsResult = await uploadToIPFS(
         encryptedFile,
         `encrypted-${selectedFile.name}`,
-        {
-          originalName: selectedFile.name,
-          fileHash,
-          encrypted: 'true',
-        }
+        { originalName: selectedFile.name, fileHash, encrypted: 'true' }
       );
 
-      // Step 4: Create lock on blockchain
-      setCurrentStep('Creation du verrou sur la blockchain...');
       const unlockTimestamp = Math.floor(new Date(unlockDate).getTime() / 1000);
 
-      // Store pending data for after blockchain confirmation
-      setPendingLockData({
-        walletId: parseInt(selectedWallet),
-        filename: selectedFile.name,
-        mimeType: selectedFile.type || 'application/octet-stream',
-        sizeBytes: originalSize,
-        ipfsHash: ipfsResult.ipfsHash,
-        unlockAt: new Date(unlockDate).toISOString(),
-      });
+      if (useEmbedded) {
+        // ===== EMBEDDED FLOW — synchronous (await receipt), save inline =====
+        setCurrentStep('Creation du verrou sur la blockchain (wallet embarqué)...');
+        const { txHash, lockAddress } = await embeddedFile.createFileLock({
+          ipfsHash: ipfsResult.ipfsHash,
+          encryptedKey: encryptedKey,
+          unlockTimestamp,
+        });
+        if (!lockAddress) throw new Error('Impossible de recuperer l\'adresse du contrat');
 
-      await createLockOnChain({
-        ipfsHash: ipfsResult.ipfsHash,
-        encryptedKey: encryptedKey as Hex,
-        unlockTimestamp,
-      });
+        setCurrentStep('Sauvegarde en base de donnees...');
+        await createFileLock({
+          walletId: parseInt(selectedWallet),
+          filename: selectedFile.name,
+          mimeType: selectedFile.type || 'application/octet-stream',
+          sizeBytes: originalSize,
+          ipfsHash: ipfsResult.ipfsHash,
+          txHash,
+          lockContractAddress: lockAddress,
+          chainId: CONTRACT_CHAIN_ID,
+          unlockAt: new Date(unlockDate).toISOString(),
+        });
 
-      // useEffect will handle success
+        toast.success('Fichier verrouille avec succes sur la blockchain !');
+        setIsUploadModalOpen(false);
+        setSelectedFile(null);
+        setSelectedWallet('');
+        setUnlockDate('');
+        setIsSubmitting(false);
+        setCurrentStep('');
+        refetch();
+      } else {
+        // ===== EXTERNAL FLOW — fire-and-forget, useEffect saves on confirmation =====
+        setCurrentStep('Creation du verrou sur la blockchain...');
+        setPendingLockData({
+          walletId: parseInt(selectedWallet),
+          filename: selectedFile.name,
+          mimeType: selectedFile.type || 'application/octet-stream',
+          sizeBytes: originalSize,
+          ipfsHash: ipfsResult.ipfsHash,
+          unlockAt: new Date(unlockDate).toISOString(),
+        });
+        await createLockOnChain({
+          ipfsHash: ipfsResult.ipfsHash,
+          encryptedKey: encryptedKey as Hex,
+          unlockTimestamp,
+        });
+        // useEffect handles DB save + reset
+      }
     } catch (err: any) {
       console.error('Upload error:', err);
-      setSubmitError(err.message || 'Erreur lors du verrouillage');
+      setSubmitError(err.shortMessage || err.message || 'Erreur lors du verrouillage');
       setIsSubmitting(false);
       setCurrentStep('');
       setPendingLockData(null);
@@ -255,13 +336,22 @@ export default function FilesBlockchainPage() {
   };
 
   const handleUnlock = async (file: BlockchainFileLock) => {
-    if (!address || !file.lockContractAddress) {
-      toast.error('Adresse du contrat ou wallet non disponible');
+    if (!file.lockContractAddress) {
+      toast.error('Adresse du contrat non disponible');
       return;
     }
 
-    // Check if connected to Polygon
-    if (chainId !== CONTRACT_CHAIN_ID) {
+    // The file must be unlocked with the SAME wallet that locked it (the key is
+    // derived from that wallet's signature). We detect it from the lock's wallet.
+    const useEmbedded = file.wallet?.type === 'internal' || (!isConnected && hasEmbeddedWallet);
+
+    if (!useEmbedded && !address) {
+      toast.error('Connecte le wallet externe qui a verrouillé ce fichier.');
+      return;
+    }
+
+    // External wallets must be on Polygon; embedded uses the RPC directly.
+    if (!useEmbedded && chainId !== CONTRACT_CHAIN_ID) {
       try {
         await switchChain({ chainId: CONTRACT_CHAIN_ID });
       } catch (error) {
@@ -274,10 +364,12 @@ export default function FilesBlockchainPage() {
 
     try {
       // Step 1: Sign message for key derivation
-      toast.info('Etape 1/5 : Signature du message...');
-      const signature = await signMessageAsync({
-        message: getKeyDerivationMessage(),
-      });
+      toast.info(useEmbedded
+        ? 'Etape 1/5 : Signature avec le wallet embarqué...'
+        : 'Etape 1/5 : Signature du message...');
+      const signature = useEmbedded
+        ? await embeddedFile.signKeyDerivation()
+        : await signMessageAsync({ message: getKeyDerivationMessage() });
 
       // Step 2: Read encrypted key from blockchain (public getter - no restrictions)
       toast.info('Etape 2/5 : Recuperation de la cle depuis la blockchain...');
@@ -310,7 +402,11 @@ export default function FilesBlockchainPage() {
         // Optionally call retrieveKey to mark as UNLOCKED on blockchain too
         // This is not strictly necessary for decryption but updates the on-chain state
         try {
-          await retrieveKey(file.lockContractAddress as Address);
+          if (useEmbedded) {
+            await embeddedFile.retrieveKey(file.lockContractAddress);
+          } else {
+            await retrieveKey(file.lockContractAddress as Address);
+          }
         } catch (e) {
           // Ignore blockchain state update errors - file is already decrypted
           console.log('Note: Could not update blockchain state, but file was decrypted successfully');
@@ -366,15 +462,15 @@ export default function FilesBlockchainPage() {
             Verrouillez vos fichiers sur IPFS avec un smart contract
           </p>
         </div>
-        <Button onClick={handleUpload} className="glass-button gap-2" disabled={!isConnected}>
+        <Button onClick={handleUpload} className="glass-button gap-2" disabled={!effectiveConnected}>
           <Upload className="w-4 h-4" />
           Verrouiller un fichier
         </Button>
       </div>
 
-      {!isConnected && (
+      {!effectiveConnected && (
         <div className="p-4 rounded-lg bg-warning/20 border border-warning/30 text-warning">
-          Connectez votre wallet pour utiliser cette fonctionnalite
+          Connectez un wallet (ou créez un wallet embarqué) pour utiliser cette fonctionnalité.
         </div>
       )}
 
@@ -523,31 +619,44 @@ export default function FilesBlockchainPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {canUnlock && (
-                          <Button
-                            size="sm"
-                            onClick={() => handleUnlock(file)}
-                            disabled={downloadingFileId === file.id}
-                            className="glass-button h-8 gap-2"
-                          >
-                            {downloadingFileId === file.id ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Deverrouillage...
-                              </>
-                            ) : file.status === 'UNLOCKED' ? (
-                              <>
-                                <Download className="w-3 h-3" />
-                                Telecharger
-                              </>
-                            ) : (
-                              <>
-                                <Unlock className="w-3 h-3" />
-                                Deverrouiller
-                              </>
-                            )}
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {canUnlock && (
+                            <Button
+                              size="sm"
+                              onClick={() => handleUnlock(file)}
+                              disabled={downloadingFileId === file.id}
+                              className="glass-button h-8 gap-2"
+                            >
+                              {downloadingFileId === file.id ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                  Deverrouillage...
+                                </>
+                              ) : file.status === 'UNLOCKED' ? (
+                                <>
+                                  <Download className="w-3 h-3" />
+                                  Telecharger
+                                </>
+                              ) : (
+                                <>
+                                  <Unlock className="w-3 h-3" />
+                                  Deverrouiller
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          {file.status === 'UNLOCKED' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setFileToDestroy(file)}
+                              className="h-8 px-2 text-error hover:text-error hover:bg-error/10"
+                              title="Détruire définitivement (unpin IPFS + suppression DB)"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -665,6 +774,68 @@ export default function FilesBlockchainPage() {
               )}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Destroy confirmation dialog */}
+      <Dialog open={!!fileToDestroy} onOpenChange={(open) => !open && !isDestroying && setFileToDestroy(null)}>
+        <DialogContent className="bg-dark-blue-lighter border-error/30 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-error flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              Détruire définitivement
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-2">
+            <p className="text-text-secondary text-sm">
+              Tu vas détruire <span className="text-white font-mono">{fileToDestroy?.filename}</span>{' '}
+              de manière permanente :
+            </p>
+
+            <ul className="text-sm text-text-secondary space-y-1.5 list-disc list-inside ml-2">
+              <li>Le fichier sera <strong className="text-white">unpinned de Pinata</strong> (plus servi par notre infrastructure)</li>
+              <li>L'entrée en base de données est <strong className="text-white">supprimée</strong></li>
+              <li>Même les admins ne pourront plus y accéder via notre app</li>
+              <li>Le contrat on-chain reste, mais la clé chiffrée qu'il contient est inutile sans le fichier</li>
+            </ul>
+
+            <div className="p-3 rounded-lg bg-warning/10 border border-warning/30 flex gap-2">
+              <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-warning/90">
+                Cette action est <strong>irréversible</strong>. Assure-toi d'avoir bien téléchargé
+                ton fichier déchiffré avant de continuer.
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setFileToDestroy(null)}
+                disabled={isDestroying}
+                className="flex-1 border-glass-border text-text-secondary hover:text-white"
+              >
+                Annuler
+              </Button>
+              <Button
+                onClick={handleDestroy}
+                disabled={isDestroying}
+                className="flex-1 bg-error hover:bg-error/90 text-white"
+              >
+                {isDestroying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Destruction...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Détruire
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

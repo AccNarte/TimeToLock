@@ -16,10 +16,13 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Unauthorized - clear user data and redirect to login
-      if (typeof window !== 'undefined') {
+      // /auth/me is a session probe used by AuthProvider on every page (including
+      // public ones like the landing). Letting it redirect would kick anonymous
+      // visitors off public pages — let AuthProvider handle the null-user state.
+      const isAuthProbe = (error.config?.url ?? '').includes('/auth/me');
+
+      if (typeof window !== 'undefined' && !isAuthProbe) {
         localStorage.removeItem('user');
-        // Don't redirect if already on login page
         if (!window.location.pathname.includes('/login')) {
           window.location.href = '/login';
         }
